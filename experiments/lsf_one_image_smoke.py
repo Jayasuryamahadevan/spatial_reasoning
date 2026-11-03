@@ -104,13 +104,14 @@ def main() -> None:
     handle = model.backbone.model.vision_tower.register_forward_hook(count_vision_calls)
     started = time.perf_counter()
     with torch.inference_mode():
-        outputs = model(
+        outputs = model.generate_answer(
+            tokenizer=processor.tokenizer,
+            max_new_tokens=24,
             input_ids=model_inputs["input_ids"],
             attention_mask=model_inputs["attention_mask"],
             pixel_values=model_inputs["pixel_values"],
             image_grid_thw=model_inputs["image_grid_thw"],
             rgb=rgb,
-            use_cache=False,
         )
     torch.cuda.synchronize(device)
     elapsed = time.perf_counter() - started
@@ -127,7 +128,8 @@ def main() -> None:
         "processed_rgb_size": [resized_width, resized_height],
         "grid_thw": grid.tolist(),
         "vision_tower_calls": vision_call_count["count"],
-        "forward_seconds": elapsed,
+        "forward_and_decode_seconds": elapsed,
+        "answer_text": outputs.get("answer_text", ""),
         "peak_allocated_gib": torch.cuda.max_memory_allocated(device) / 1024**3,
         "peak_reserved_gib": torch.cuda.max_memory_reserved(device) / 1024**3,
         "parameter_report": model.parameter_report(),
