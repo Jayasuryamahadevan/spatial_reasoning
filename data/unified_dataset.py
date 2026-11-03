@@ -124,9 +124,11 @@ class UnifiedSpatialJsonlDataset(Dataset):
         mask_valid = torch.zeros((boxes.shape[0],), dtype=torch.bool)
         labels: list[str] = []
 
+        row_labels = row.get("labels") or []
         for object_index in range(boxes.shape[0]):
             instance = instances[object_index] if object_index < len(instances) else {}
-            labels.append(str(instance.get("label", (row.get("labels") or [""] * boxes.shape[0])[object_index])))
+            fallback_label = row_labels[object_index] if object_index < len(row_labels) else ""
+            labels.append(str(instance.get("label") or fallback_label))
             rle = instance.get("mask_rle")
             if not isinstance(rle, dict):
                 continue
