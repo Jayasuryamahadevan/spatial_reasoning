@@ -292,6 +292,72 @@ class UnifiedLSFVLM(nn.Module):
         }
         return result
 
+    @torch.inference_mode()
+    def generate_answer(
+        self,
+        tokenizer: Any,
+        max_new_tokens: int = 96,
+        eos_token_id: int | list[int] | None = None,
+        **forward_kwargs: Any,
+    ) -> dict[str, Any]:
+        """Run one unified prefill, return spatial heads, then decode the text answer.
+
+        The image/vision encoder is evaluated once in forward. Subsequent text
+        tokens are decoded from the returned LFM3 KV/recurrent cache and do not
+        invoke the vision tower or any external teacher model.
+        """
+        if max_new_tokens < 1:
+            raise ValueError("max_new_tokens must be positive")
+        output = self.forward(**forward_kwargs, use_cache=True)
+        cache = output["past_key_values"]
+        attention_mask = output["expanded_attention_mask"]
+        next_logits = output["language_logits"][:, -1, :]
+
+        if eos_token_id is None:
+            eos_token_id = getattr(self.backbone.generation_config, "eos_token_id", None)
+        if eos_token_id is None:
+            eos_ids: set[int] = set()
+        elif isinstance(eos_token_id, int):
+            eos_ids = {eos_token_id}
+        else:
+            eos_ids = {int(token_id) for token_id in eos_token_id}
+
+        generated: list[Tensor] = []
+        for _ in range(max_new_tokens):
+            next_token = torch.argmax(next_logits, dim=-1, keepdim=True)
+            generated.append(next_token)
+            if eos_ids and int(next_token[0, 0].item()) in eos_ids:
+                break
+
+            attention_mask = torch.cat(
+                (
+                    attention_mask,
+                    torch.ones(
+                        (attention_mask.shape[0], 1),
+                        dtype=attention_mask.dtype,
+                        device=attention_mask.device,
+                    ),
+                ),
+                dim=1,
+            )
+            decoded = self.backbone.model(
+                input_ids=next_token,
+                attention_mask=attention_mask,
+                past_key_values=cache,
+                use_cache=True,
+                return_dict=True,
+            )
+            cache = decoded.past_key_values
+            next_logits = self.backbone.lm_head(decoded.last_hidden_state[:, -1, :])
+
+        generated_ids = torch.cat(generated, dim=1)
+        output["past_key_values"] = cache
+        output["generated_token_ids"] = generated_ids
+        output["answer_text"] = tokenizer.batch_decode(
+            generated_ids, skip_special_tokens=True
+        )[0]
+        return output
+
     def parameter_report(self) -> dict[str, int]:
         backbone_total = sum(parameter.numel() for parameter in self.backbone.parameters())
         spatial_total = sum(parameter.numel() for parameter in self.spatial.parameters())
