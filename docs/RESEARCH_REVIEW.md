@@ -306,7 +306,57 @@ Teacher usage:
 
 Add separately licensed spatial datasets for instance masks, referring expressions, indoor/outdoor depth, and spatial relation reasoning. Keep validation/test splits disjoint from pseudo-label training. Never report validation quality against a teacher's own generated labels as if those were ground truth.
 
-## 7. Training objectives
+## 7. Dataset composition and supervision contract
+
+CC3M is a broad weakly labeled image-caption pool, not a complete spatial dataset. A caption does not enumerate every object in an image. GroundingDINO detections prompted by a caption are phrase-conditioned partial labels, not exhaustive object annotations.
+
+| Capability | Recommended source | Supervision | Evaluation |
+|---|---|---|---|
+| General image-language alignment | CC3M subset | Original caption; filtered pseudo QA | Caption/VLM regression |
+| Referring-expression grounding | RefCOCO, RefCOCO+, RefCOCOg | Expression-to-target object/region | Held-out grounding |
+| Instance segmentation | COCO instance masks; optionally LVIS | Per-instance masks and categories | Mask AP / mIoU |
+| Indoor metric depth | NYU Depth V2 | RGB-D depth + valid-pixel mask | Indoor AbsRel / delta |
+| Outdoor metric depth | KITTI depth prediction | Sparse LiDAR-aligned depth + valid-pixel mask | Outdoor AbsRel / delta |
+| Spatial relations | Visual Genome; SpatialSense | Subject-predicate-object triples | Relation accuracy / macro-F1 |
+| Weak pseudo-label branch | CC3M + GroundingDINO/SAM/Depth Anything | Noisy boxes, masks, relative depth | Training only, never final validation |
+
+RefCOCO-family datasets tie natural-language expressions to object referents. SpatialSense is useful for challenging relations because it was adversarially crowdsourced to reduce reliance on simple 2D position cues. Visual Genome contains object/attribute/relation annotations. NYU Depth V2 and KITTI provide metric depth supervision in indoor and driving domains. Check each original dataset license and distribution terms before redistribution.
+
+Depth target semantics must remain explicit:
+- Depth Anything V2 pseudo-labels are relative; min-max normalization does not create metric depth.
+- The current LSF head emits positive relative inverse depth plus uncertainty.
+- A standard unaligned metric AbsRel target such as <0.12 cannot be claimed from relative-only pseudo-labels. To target metric AbsRel, train and evaluate with metric depth and a documented camera/scale convention. Otherwise report scale-aligned relative-depth metrics separately.
+
+### Missing-label handling
+
+A unified dataset does not require every image to have every annotation. Each training record must carry availability flags for caption, boxes, instance masks, metric depth, relative depth, phrase targets, and relations.
+
+Calculate only losses for valid target types and normalize by valid elements. Unannotated object pairs are not automatically no_relation; use an ignore index unless a dataset explicitly defines negatives. Missing depth pixels are invalid, not zero depth.
+
+Use a task-balanced sampler so the large caption corpus does not swamp smaller dense datasets. Tune mixture weights by validation and per-task gradient measurements rather than claiming an optimal fixed percentage beforehand.
+
+### Pseudo-label quality controls
+
+For the CC3M branch:
+1. Preserve caption, image provenance, and image hash.
+2. Treat caption phrases as incomplete referring expressions.
+3. Preserve detector confidence and the phrase associated with each box.
+4. Filter invalid, tiny, or out-of-frame boxes.
+5. Preserve SAM predicted-IoU and mask-area statistics; do not turn low-confidence empty predictions into negative masks.
+6. Store raw teacher relative depth and normalized training targets with explicit representation metadata.
+7. Keep teacher confidence fields for loss weighting and later audits.
+8. Deduplicate images and keep all validation/test source images out of pseudo-label training.
+
+Do not validate the student against predictions from the same teacher that generated its training labels.
+
+Sources:
+- RefCOCO family: https://www.tensorflow.org/datasets/catalog/ref_coco
+- NYU Depth V2: https://cs.nyu.edu/~fergus/datasets/nyu_depth_v2.html
+- KITTI depth prediction: https://www.cvlibs.net/datasets/kitti/eval_depth.php?benchmark=depth_prediction
+- Visual Genome: https://visualgenome.org/
+- SpatialSense: https://openaccess.thecvf.com/content_ICCV_2019/html/Yang_SpatialSense_An_Adversarially_Crowdsourced_Benchmark_for_Spatial_Relation_Recognition_ICCV_2019_paper.html
+
+## 8. Training objectives
 
 Initial total objective:
 
@@ -323,7 +373,7 @@ Recommended components:
 
 Conditional flow matching is not in the initial runtime model. It is an optional ablation after direct masks work. Flow should refine a low-resolution continuous mask/logit or signed-distance representation, and it must beat direct mask prediction on quality/latency before inclusion.
 
-## 8. Model-size and edge constraints
+## 9. Model-size and edge constraints
 
 The LFM3 base already has about 1.92B parameters. The current spatial core is deliberately compact, but the adapter also introduces spatial-to-language projection and type embeddings; the final parameter report must include every module. Do not claim a final parameter total until UnifiedLSFVLM.parameter_report() is executed on the actual loaded checkpoint. LFM3-VL is listed under the LFM Open License v1.0; review that license and every dataset/teacher license before redistributing weights or building a commercial artifact.
 
@@ -339,7 +389,7 @@ For the RTX 3050 4GB target:
 
 A <4GB total memory claim is not supported. The target must be specified as either VRAM, model artifact size, or combined process RSS.
 
-## 9. Experiments and acceptance criteria
+## 10. Experiments and acceptance criteria
 
 ### Backbone/interface
 - Verify get_image_features(..., output_hidden_states=True) returns final unmerged features and intermediate vision outputs.
@@ -375,7 +425,7 @@ Report box AP/IoU, mask mIoU/AP, depth AbsRel and δ thresholds, relation accura
 
 No proposed target metric is claimed achieved until the corresponding experiment is measured.
 
-## 10. Implementation status and next gates
+## 11. Implementation status and next gates
 
 Implemented in this repository:
 - lsf_vlm/modeling/spatial_core.py
