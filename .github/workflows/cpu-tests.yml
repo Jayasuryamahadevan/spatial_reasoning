@@ -1,0 +1,36 @@
+name: CPU tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install CPU test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install numpy pillow scipy pycocotools pytest
+
+      - name: Compile Python modules
+        run: python -m compileall -q lsf_vlm data train_spatial.py
+
+      - name: Run spatial core and dataset tests
+        run: python -m pytest -q tests/test_spatial_core.py tests/test_unified_dataset.py
