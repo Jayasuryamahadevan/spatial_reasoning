@@ -351,7 +351,7 @@ class LSFSpatialCore(nn.Module):
             "spatial_tokens": spatial_tokens,
             **entities,
             "mask_logits": mask_logits,
-            "relative_inverse_depth": depth,
+            "relative_depth": depth,
             "depth_log_variance": depth_log_variance,
             "relation_logits": relations,
             "pixel_features": pixel_features,
