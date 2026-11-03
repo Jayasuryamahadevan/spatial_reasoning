@@ -24,7 +24,43 @@ Image paths may be absolute or relative to the manifest. Images must already be 
 
 Example Kaggle manifest:
 
-    /kaggle/input/cc3m-subset/manifest.csv
+    /kaggle/working/cc3m_images/manifest.csv
+
+### Create the 50K CC3M image subset
+
+Download the official CC3M metadata TSV first. The original CC3M TSV is commonly distributed without a header and ordered as caption then URL; the helper also detects a header row containing caption and url.
+
+    pip install img2dataset pyarrow
+
+    python data/prepare_cc3m.py sample \
+      --source-tsv /kaggle/input/cc3m-metadata/Train_GCC-training.tsv \
+      --output-tsv /kaggle/working/cc3m_50k.tsv \
+      --sample-size 50000 \
+      --seed 42
+
+Download the selected images. img2dataset writes image files and per-shard Parquet metadata; failed or unavailable URLs are recorded and filtered when the manifest is built.
+
+    img2dataset \
+      --url_list /kaggle/working/cc3m_50k.tsv \
+      --input_format tsv \
+      --url_col url \
+      --caption_col caption \
+      --output_format files \
+      --output_folder /kaggle/working/cc3m_images \
+      --processes_count 4 \
+      --thread_count 16 \
+      --image_size 512 \
+      --resize_mode keep_ratio_largest \
+      --retries 2 \
+      --enable_wandb False
+
+Build the manifest consumed by the teacher pipeline:
+
+    python data/prepare_cc3m.py manifest \
+      --images-dir /kaggle/working/cc3m_images \
+      --output-csv /kaggle/working/cc3m_images/manifest.csv
+
+Check the printed usable-image count. It may be lower than 50,000 because source URLs can fail or be removed. The annotation run processes all valid rows in the manifest up to --max-samples.
 
 ## 2. Install dependencies
 
