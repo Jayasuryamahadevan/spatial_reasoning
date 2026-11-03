@@ -78,7 +78,13 @@ def prepare_processor_inputs(
     patch_size: int,
     answer: str | None = None,
     phrases: list[tuple[str, int]] | None = None,
-) -> tuple[dict[str, torch.Tensor], torch.Tensor, torch.Tensor | None, tuple[int, int]]:
+) -> tuple[
+    dict[str, torch.Tensor],
+    torch.Tensor,
+    torch.Tensor | None,
+    tuple[int, int],
+    torch.Tensor | None,
+]:
     messages = [{
         "role": "user",
         "content": [
