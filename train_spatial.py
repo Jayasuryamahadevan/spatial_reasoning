@@ -75,7 +75,7 @@ def prepare_processor_inputs(
     dtype: torch.dtype,
     patch_size: int,
     answer: str | None = None,
-    phrases: list[str] | None = None,
+    phrases: list[tuple[str, int]] | None = None,
 ) -> tuple[dict[str, torch.Tensor], torch.Tensor, torch.Tensor | None, tuple[int, int]]:
     messages = [{
         "role": "user",
@@ -147,13 +147,13 @@ def prepare_processor_inputs(
 
     phrase_token_masks = None
     phrase_targets = None
-    phrases = [phrase for phrase in (phrases or []) if phrase.strip()]
+    phrases = [(phrase, int(target_index)) for phrase, target_index in (phrases or []) if phrase.strip()]
     if phrases:
         sequence = input_ids[0].tolist()
         search_from = start
         masks = []
         matched_targets = []
-        for phrase_index, phrase in enumerate(phrases):
+        for phrase, target_index in phrases:
             phrase_ids = processor.tokenizer(
                 " " + phrase,
                 add_special_tokens=False,
@@ -180,7 +180,7 @@ def prepare_processor_inputs(
             mask = torch.zeros_like(input_ids, dtype=torch.long)
             mask[0, found:found + len(phrase_ids)] = 1
             masks.append(mask)
-            matched_targets.append(phrase_index)
+            matched_targets.append(target_index)
             search_from = found + len(phrase_ids)
         if masks:
             phrase_token_masks = torch.stack(masks, dim=1).to(device)
@@ -434,7 +434,12 @@ def main() -> None:
 
     for epoch in range(args.epochs):
         for sample in loader:
-            phrase_labels = [label for label in sample["labels"] if label]
+            phrase_pairs = [
+                (label, object_index)
+                for object_index, label in enumerate(sample["labels"])
+                if label
+            ]
+            phrase_labels = [label for label, _ in phrase_pairs]
             if args.train_language_prefix:
                 question = (
                     "Describe the image, identify the objects, and explain their spatial arrangement. "
@@ -456,7 +461,7 @@ def main() -> None:
                 torch.float16,
                 patch_size=int(model.backbone.config.vision_config.patch_size),
                 answer=answer,
-                phrases=phrase_labels,
+                phrases=phrase_pairs,
             )
             with accelerator.accumulate(model):
                 outputs = model(
