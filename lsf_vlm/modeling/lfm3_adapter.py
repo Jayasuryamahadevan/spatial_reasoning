@@ -124,6 +124,10 @@ class UnifiedLSFVLM(nn.Module):
                 dtype=language_hidden.dtype,
             )
             mask[:, :insertion_index] = 0
+            mask[
+                :,
+                insertion_index : insertion_index + self.config.num_spatial_latents,
+            ] = 0
         else:
             if question_mask.ndim != 2 or question_mask.shape[0] != 1:
                 raise ValueError("question_mask must be [1, original_sequence_length]")
@@ -146,6 +150,40 @@ class UnifiedLSFVLM(nn.Module):
         denominator = mask.sum(dim=1, keepdim=True).clamp_min(1.0)
         return (language_hidden * mask.unsqueeze(-1)).sum(dim=1) / denominator
 
+
+    def _pool_phrase_contexts(
+        self,
+        language_hidden: Tensor,
+        phrase_token_masks: Tensor | None,
+        insertion_index: int,
+    ) -> Tensor | None:
+        if phrase_token_masks is None:
+            return None
+        if phrase_token_masks.ndim != 3 or phrase_token_masks.shape[0] != 1:
+            raise ValueError("phrase_token_masks must be [1,num_phrases,original_sequence_length]")
+        if phrase_token_masks.shape[-1] == language_hidden.shape[1]:
+            masks = phrase_token_masks.to(language_hidden.device, language_hidden.dtype)
+        else:
+            zeros = torch.zeros(
+                (
+                    phrase_token_masks.shape[0],
+                    phrase_token_masks.shape[1],
+                    self.config.num_spatial_latents,
+                ),
+                device=language_hidden.device,
+                dtype=language_hidden.dtype,
+            )
+            masks = torch.cat(
+                (
+                    phrase_token_masks[:, :, :insertion_index],
+                    zeros,
+                    phrase_token_masks[:, :, insertion_index:],
+                ),
+                dim=-1,
+            ).to(language_hidden.device, language_hidden.dtype)
+        weights = masks / masks.sum(dim=-1, keepdim=True).clamp_min(1.0)
+        return torch.einsum("bpl,bld->bpd", weights, language_hidden)
+
     def forward(
         self,
         input_ids: Tensor,
@@ -154,6 +192,7 @@ class UnifiedLSFVLM(nn.Module):
         image_grid_thw: Tensor,
         rgb: Tensor,
         question_mask: Tensor | None = None,
+        phrase_token_masks: Tensor | None = None,
         labels: Tensor | None = None,
         use_cache: bool = False,
     ) -> dict[str, Any]:
@@ -225,13 +264,19 @@ class UnifiedLSFVLM(nn.Module):
         language_context = self._pool_language_context(
             language_hidden, question_mask, insertion_index
         )
+        phrase_contexts = self._pool_phrase_contexts(
+            language_hidden, phrase_token_masks, insertion_index
+        )
         if self.detach_spatial_language_context:
             language_context = language_context.detach()
+            if phrase_contexts is not None:
+                phrase_contexts = phrase_contexts.detach()
         spatial_outputs = self.spatial(
             vision_map=vision_map,
             rgb=rgb,
             language_context=language_context,
             spatial_tokens=spatial_tokens,
+            phrase_contexts=phrase_contexts,
         )
 
         result: dict[str, Any] = {
