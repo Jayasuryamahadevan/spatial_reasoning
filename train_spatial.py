@@ -207,7 +207,13 @@ def prepare_processor_inputs(
         model_inputs["phrase_token_masks"] = phrase_token_masks
     if labels is not None:
         model_inputs["labels"] = labels.to(device)
-    return model_inputs, question_mask.to(device), labels.to(device) if labels is not None else None, (resized_h, resized_w)
+    return (
+        model_inputs,
+        question_mask.to(device),
+        labels.to(device) if labels is not None else None,
+        (resized_h, resized_w),
+        phrase_targets,
+    )
 
 
 def compute_losses(
@@ -464,7 +470,7 @@ def main() -> None:
                 )
                 answer = None
 
-            inputs, question_mask, labels, _ = prepare_processor_inputs(
+            inputs, question_mask, labels, _, phrase_targets = prepare_processor_inputs(
                 processor,
                 sample["image"],
                 question,
@@ -474,7 +480,6 @@ def main() -> None:
                 answer=answer,
                 phrases=phrase_pairs,
             )
-            phrase_targets = inputs.pop("phrase_targets", None)
             with accelerator.accumulate(model):
                 outputs = model(
                     **inputs,
