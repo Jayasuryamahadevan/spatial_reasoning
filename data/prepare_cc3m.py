@@ -97,7 +97,7 @@ def build_manifest(args: argparse.Namespace) -> None:
                 if len(key) < 6 or not caption:
                     failed += 1
                     continue
-                shard, local_index = key[:5], int(key[5:])
+                shard = key[:5]
                 image_path = output_root / shard / f"{key}.jpg"
                 if not image_path.is_file():
                     missing += 1
