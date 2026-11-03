@@ -67,6 +67,7 @@ class UnifiedSpatialJsonlDataset(Dataset):
         self,
         jsonl_path: str | Path,
         data_root: str | Path | None = None,
+        image_root: str | Path | None = None,
         max_samples: int | None = None,
         min_sam_iou: float = 0.0,
         min_mask_pixels: int = 16,
@@ -76,6 +77,7 @@ class UnifiedSpatialJsonlDataset(Dataset):
         if not self.jsonl_path.is_file():
             raise FileNotFoundError(self.jsonl_path)
         self.data_root = Path(data_root).resolve() if data_root else self.jsonl_path.parent
+        self.image_root = Path(image_root).resolve() if image_root else self.data_root
         self.min_sam_iou = float(min_sam_iou)
         self.min_mask_pixels = int(min_mask_pixels)
         self.max_objects = int(max_objects)
@@ -92,6 +94,17 @@ class UnifiedSpatialJsonlDataset(Dataset):
                 if row.get("status") not in {"ok", "partial", None}:
                     continue
                 image_path = _resolve_path(row.get("image_path"), self.data_root)
+                if image_path is None or not image_path.is_file():
+                    stored_path = Path(str(row.get("image_path", ""))).expanduser()
+                    candidates = []
+                    if stored_path.name:
+                        candidates.append(self.image_root / stored_path.name)
+                    if len(stored_path.parts) >= 2:
+                        candidates.append(self.image_root / stored_path.parts[-2] / stored_path.name)
+                    if "cc3m_images" in stored_path.parts:
+                        offset = stored_path.parts.index("cc3m_images")
+                        candidates.append(self.image_root.joinpath(*stored_path.parts[offset + 1:]))
+                    image_path = next((candidate.resolve() for candidate in candidates if candidate.is_file()), None)
                 if image_path is None or not image_path.is_file():
                     continue
                 row["_resolved_image_path"] = str(image_path)
