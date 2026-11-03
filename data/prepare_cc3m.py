@@ -98,7 +98,7 @@ def build_manifest(args: argparse.Namespace) -> None:
                     failed += 1
                     continue
                 shard, local_index = key[:5], int(key[5:])
-                image_path = output_root / shard / f"{local_index:09d}.jpg"
+                image_path = output_root / shard / f"{key}.jpg"
                 if not image_path.is_file():
                     missing += 1
                     continue
