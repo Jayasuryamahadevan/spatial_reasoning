@@ -433,12 +433,14 @@ Implemented in this repository:
 - lsf_vlm/training/losses.py and matching.py: focal/Dice masks, uncertainty-aware relative depth, Hungarian box matching, phrase/entity alignment, and mask/relation target remapping.
 - data/unified_dataset.py: partial-label JSONL loader with compressed COCO RLE and relative-depth loading.
 - train_spatial.py: Accelerate stage-1 spatial warmup and optional stage-2 spatial-prefix language objective.
-- tests/test_spatial_core.py and tests/test_unified_dataset.py.
+- tests/test_spatial_core.py, tests/test_unified_dataset.py, and tests/test_lfm3_adapter_contract.py (fake-backbone single-pass contract).
 - .github/workflows/cpu-tests.yml and .github/workflows/spatial-core-tests.yml.
 
 CPU verification:
-- GitHub Actions commit b845d367fee2fba3c6a283df317f5f816571ce7d: 12 tests passed, with one pycocotools/NumPy deprecation warning.
-- Both CPU workflow jobs completed successfully.
+- GitHub Actions commit b845d367fee2fba3c6a283df317f5f816571ce7d: 12 tests passed.
+- GitHub Actions including the fake LFM3 adapter contract test: 13 tests passed, one pycocotools/NumPy deprecation warning.
+- Both CPU workflow jobs completed successfully at commit 8fae84d2748a38cbea8214ed7628137a6a345060.
+- The fake-backbone contract verifies one vision-tower execution, exact reuse of precomputed multimodal vision outputs, preservation of image placeholders, 64 inserted soft tokens, and unified text/box/mask/depth/relation outputs.
 - An earlier CPU run exposed a 2048-to-256 duplicate language-projection bug; it was corrected and the forward/gradient tests now pass.
 
 Still pending:
