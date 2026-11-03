@@ -6,3 +6,4 @@ accelerate>=1.2
 safetensors
 Pillow>=10
 pytest>=8
+scipy>=1.11
