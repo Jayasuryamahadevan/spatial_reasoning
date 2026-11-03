@@ -31,6 +31,7 @@ from lsf_vlm.training.losses import (
     LossWeights,
     language_cross_entropy,
     mask_loss,
+    phrase_grounding_loss,
     relation_classification_loss,
     relative_depth_uncertainty_loss,
 )
@@ -74,6 +75,7 @@ def prepare_processor_inputs(
     dtype: torch.dtype,
     patch_size: int,
     answer: str | None = None,
+    phrases: list[str] | None = None,
 ) -> tuple[dict[str, torch.Tensor], torch.Tensor, torch.Tensor | None, tuple[int, int]]:
     messages = [{
         "role": "user",
@@ -143,6 +145,49 @@ def prepare_processor_inputs(
     stop = prompt["input_ids"].shape[1]
     question_mask[:, start:stop] = 1
 
+    phrase_token_masks = None
+    phrase_targets = None
+    phrases = [phrase for phrase in (phrases or []) if phrase.strip()]
+    if phrases:
+        sequence = input_ids[0].tolist()
+        search_from = start
+        masks = []
+        matched_targets = []
+        for phrase_index, phrase in enumerate(phrases):
+            phrase_ids = processor.tokenizer(
+                " " + phrase,
+                add_special_tokens=False,
+            )["input_ids"]
+            if not phrase_ids:
+                phrase_ids = processor.tokenizer(
+                    phrase,
+                    add_special_tokens=False,
+                )["input_ids"]
+            found = None
+            if phrase_ids:
+                last_start = min(stop, len(sequence)) - len(phrase_ids)
+                for candidate_start in range(search_from, last_start + 1):
+                    if sequence[candidate_start:candidate_start + len(phrase_ids)] == phrase_ids:
+                        found = candidate_start
+                        break
+                if found is None:
+                    for candidate_start in range(start, last_start + 1):
+                        if sequence[candidate_start:candidate_start + len(phrase_ids)] == phrase_ids:
+                            found = candidate_start
+                            break
+            if found is None:
+                continue
+            mask = torch.zeros_like(input_ids, dtype=torch.long)
+            mask[0, found:found + len(phrase_ids)] = 1
+            masks.append(mask)
+            matched_targets.append(phrase_index)
+            search_from = found + len(phrase_ids)
+        if masks:
+            phrase_token_masks = torch.stack(masks, dim=1).to(device)
+            phrase_targets = torch.tensor(
+                [matched_targets], dtype=torch.long, device=device
+            )
+
     model_inputs = {
         "input_ids": input_ids.to(device),
         "attention_mask": attention_mask.to(device),
@@ -151,6 +196,9 @@ def prepare_processor_inputs(
         "rgb": rgb,
         "question_mask": question_mask.to(device),
     }
+    if phrase_token_masks is not None:
+        model_inputs["phrase_token_masks"] = phrase_token_masks
+        model_inputs["phrase_targets"] = phrase_targets
     if labels is not None:
         model_inputs["labels"] = labels.to(device)
     return model_inputs, question_mask.to(device), labels.to(device) if labels is not None else None, (resized_h, resized_w)
@@ -162,6 +210,7 @@ def compute_losses(
     device: torch.device,
     train_language_prefix: bool,
     loss_weights: LossWeights,
+    phrase_targets: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
     components: dict[str, torch.Tensor] = {}
     target_boxes = sample["boxes"].to(device=device, dtype=torch.float32)
@@ -205,6 +254,17 @@ def compute_losses(
                 relation_targets,
             )
 
+        if phrase_targets is not None and "entity_phrase_logits" in outputs:
+            phrase_slots = remap_phrase_targets_to_entity_slots(
+                matches,
+                phrase_targets,
+                num_queries=outputs["entity_phrase_logits"].shape[1],
+            )
+            components["phrase"] = phrase_grounding_loss(
+                outputs["entity_phrase_logits"],
+                phrase_slots,
+            )
+
     if sample["depth"] is not None:
         target_depth = sample["depth"].unsqueeze(0).to(device=device, dtype=torch.float32)
         depth_components = relative_depth_uncertainty_loss(
@@ -240,6 +300,7 @@ def combine_spatial_losses(
         "mask_dice": weights.mask_dice,
         "depth_total": weights.depth,
         "relation": weights.relation,
+        "phrase": weights.phrase,
     }
     total = None
     metrics: dict[str, torch.Tensor] = {}
@@ -395,6 +456,7 @@ def main() -> None:
                 torch.float16,
                 patch_size=int(model.backbone.config.vision_config.patch_size),
                 answer=answer,
+                phrases=phrase_labels,
             )
             with accelerator.accumulate(model):
                 outputs = model(
@@ -410,6 +472,7 @@ def main() -> None:
                     accelerator.device,
                     train_language_prefix=args.train_language_prefix,
                     loss_weights=loss_weights,
+                    phrase_targets=inputs.get("phrase_targets"),
                 )
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
