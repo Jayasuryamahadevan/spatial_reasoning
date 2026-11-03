@@ -102,10 +102,10 @@ Only after stage 1 is stable, enable the spatial prefix language objective:
       --max-samples 256 \
       --epochs 1 \
       --gradient-accumulation-steps 4 \
-      --max-steps 10 \
+      --max-steps 30 \
       --train-language-prefix
 
-This objective uses captions as weak text targets and allows gradients through the continuous spatial prefix while keeping LFM3 backbone weights frozen. It costs more memory because the frozen language model must retain the graph needed to backpropagate to the prefix. Profile before scaling.
+This resumes at step 20 and trains until cumulative step 30 (10 additional optimizer updates). The optimizer is restored when its parameter groups match; because this stage adds prefix parameters, it may start a fresh optimizer while retaining all model weights. This objective uses captions as weak text targets and allows gradients through the continuous spatial prefix while keeping LFM3 backbone weights frozen. It costs more memory because the frozen language model must retain the graph needed to backpropagate to the prefix. Profile before scaling.
 
 ### Important supervision limits
 
