@@ -48,26 +48,39 @@ class UnifiedLSFVLM(nn.Module):
         if freeze_backbone:
             for parameter in self.backbone.parameters():
                 parameter.requires_grad_(False)
+        # Keep compact spatial heads beside the vision tower.
+        vision_parameter = next(self.backbone.model.vision_tower.parameters())
+        spatial_device = vision_parameter.device
+        spatial_dtype = vision_parameter.dtype
+        self.spatial.to(device=spatial_device, dtype=spatial_dtype)
+        self.spatial_to_language.to(device=spatial_device, dtype=spatial_dtype)
+        self.spatial_type_embedding.data = self.spatial_type_embedding.data.to(
+            device=spatial_device, dtype=spatial_dtype
+        )
+        self.layer_fusion_logits.data = self.layer_fusion_logits.data.to(
+            device=spatial_device, dtype=torch.float32
+        )
 
     @classmethod
     def from_pretrained(
         cls,
         model_id: str = "LiquidAI/LFM3-VL-2B",
         spatial_config: SpatialCoreConfig | None = None,
-        torch_dtype: torch.dtype | None = torch.bfloat16,
-        device_map: str | dict[str, int] | None = "auto",
+        torch_dtype: torch.dtype | None = torch.float16,
+        device_map: str | dict[str, int] | None = None,
         freeze_backbone: bool = True,
         **kwargs: Any,
     ) -> "UnifiedLSFVLM":
         from transformers import AutoModelForImageTextToText
 
-        backbone = AutoModelForImageTextToText.from_pretrained(
-            model_id,
-            trust_remote_code=True,
-            dtype=torch_dtype,
-            device_map=device_map,
+        load_kwargs: dict[str, Any] = {
+            "trust_remote_code": True,
+            "dtype": torch_dtype,
             **kwargs,
-        )
+        }
+        if device_map is not None:
+            load_kwargs["device_map"] = device_map
+        backbone = AutoModelForImageTextToText.from_pretrained(model_id, **load_kwargs)
         return cls(backbone, spatial_config=spatial_config, freeze_backbone=freeze_backbone)
 
     def _vision_map(self, vision_outputs: Any, image_grid_thw: Tensor) -> Tensor:
@@ -193,12 +206,13 @@ class UnifiedLSFVLM(nn.Module):
             inputs_embeds=new_embeds,
             attention_mask=new_attention,
             mm_encoder_outputs={"image": vision_outputs},
-            output_hidden_states=True,
+            output_hidden_states=False,
             use_cache=use_cache,
             return_dict=True,
         )
         language_hidden = language_outputs.last_hidden_state
         logits = self.backbone.lm_head(language_hidden)
+        rgb = rgb.to(device=vision_map.device, dtype=vision_map.dtype)
 
         # 5) Condition entity queries on the same LFM3 contextualized question.
         language_context = self._pool_language_context(
@@ -214,7 +228,6 @@ class UnifiedLSFVLM(nn.Module):
         result: dict[str, Any] = {
             **spatial_outputs,
             "language_logits": logits,
-            "language_hidden_states": language_outputs.hidden_states,
             "past_key_values": language_outputs.past_key_values,
             "image_hidden_states": language_outputs.image_hidden_states,
             "expanded_input_ids": new_ids,
@@ -226,12 +239,6 @@ class UnifiedLSFVLM(nn.Module):
     def parameter_report(self) -> dict[str, int]:
         backbone_total = sum(parameter.numel() for parameter in self.backbone.parameters())
         spatial_total = sum(parameter.numel() for parameter in self.spatial.parameters())
-        prefix_total = sum(
-            parameter.numel()
-            for module in (self.spatial_to_language, self)
-            for parameter in module.parameters()
-            if parameter is not None
-        )
         # Deduplicate shared parameters by identity.
         seen = set()
         total = 0
