@@ -78,7 +78,9 @@ Run only one stage with --stage boxes, --stage masks, or --stage depth. Rebuild 
 1. Run eight images.
 2. Confirm both GPU processes with nvidia-smi.
 3. Confirm all three stage files contain records.
-4. Run evaluation/visualize_samples.py against the final JSONL.
+4. Run the alignment preview on 100 records:
+
+       python evaluation/visualize_samples.py --jsonl /kaggle/working/lsf_vlm_distillation/distilled.jsonl --output-dir /kaggle/working/lsf_vlm_distillation/previews --count 100
 5. Inspect 100 images before increasing to 50K.
 
 Record peak allocated/reserved VRAM, images per second, failed-image count, and mask coverage for each stage. Memory figures in the research plan are estimates; measured Kaggle logs are the acceptance evidence.
