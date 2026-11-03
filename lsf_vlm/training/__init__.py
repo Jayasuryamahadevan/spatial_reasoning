@@ -23,3 +23,15 @@ __all__ = [
     "relative_depth_uncertainty_loss",
     "sigmoid_focal_loss",
 ]
+
+from .matching import (
+    hungarian_match,
+    matched_entity_box_losses,
+    objectness_focal_loss,
+)
+
+__all__ += [
+    "hungarian_match",
+    "matched_entity_box_losses",
+    "objectness_focal_loss",
+]
