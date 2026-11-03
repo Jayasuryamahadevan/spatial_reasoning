@@ -127,3 +127,5 @@ Record peak allocated/reserved VRAM, images per second, failed-image count, and 
 - CC3M captions and image URLs are noisy. Removed, unavailable, and corrupt images must be filtered.
 - Check the terms for source images and each teacher checkpoint before redistribution.
 - LLaVA-34B is intentionally excluded from the free T4x2 baseline. Original CC3M captions provide initial text supervision.
+- Architecture gate before Phase 2: Qwen2.5-3B alone is published as 3.09B parameters, so it cannot be the language backbone of a 2B-total model. Either revise the total parameter target or select a smaller language backbone before freezing the architecture.
+- Check the Qwen2.5-3B Research License before any commercial redistribution or deployment; its license is not the same as the Apache-2.0 license used by several other Qwen2.5 sizes.
