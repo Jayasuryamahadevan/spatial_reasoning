@@ -12,6 +12,19 @@ Before building the spatial heads, run the backbone probe:
       --question "Where is the red cup relative to the laptop?" \
       --output /tmp/lfm3_probe.json
 
+The integrated one-image gate tests the LFM3 vision tower + 64 continuous spatial tokens + entity, mask, depth, and relation heads in one forward path. It asserts that the LFM3 vision tower executes exactly once:
+
+    python experiments/lsf_one_image_smoke.py \
+      --image /path/to/test.jpg \
+      --question "Where is the red cup relative to the laptop?" \
+      --output /tmp/lsf_smoke_report.json
+
+Run the spatial-core unit tests:
+
+    pytest -q tests/test_spatial_core.py
+
+Neither the integration gate nor the unit tests have been run on Kaggle yet. Record actual output, latency, and peak memory before starting the 50K teacher annotation job.
+
 The LFM3 environment is intentionally separate from the teacher environment. The existing teacher pipeline pins Transformers below 5, while the current LFM3 model card documents Transformers 5.21.0 or newer. Do not upgrade the teacher environment in place.
 
 ## Phase 1 teacher distillation (legacy preparation workflow)
