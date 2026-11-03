@@ -11,8 +11,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
-import random
 import time
 from pathlib import Path
 from typing import Any
@@ -400,14 +398,12 @@ def main() -> None:
 
     # Stage 1 only updates the spatial core. Prefix projection is added in
     # stage 2 when language_path_grad is enabled.
-    trainable_modules = [model.spatial]
     trainable_parameters = [
         parameter for parameter in model.spatial.parameters() if parameter.requires_grad
     ]
     # Learn the blend over LFM3's final four vision-layer feature taps.
     trainable_parameters.append(model.layer_fusion_logits)
     if args.train_language_prefix:
-        trainable_modules += [model.spatial_to_language]
         model.spatial_type_embedding.requires_grad_(True)
     else:
         model.spatial_to_language.requires_grad_(False)
@@ -450,7 +446,17 @@ def main() -> None:
         unwrapped.spatial_type_embedding.data.copy_(checkpoint["spatial_type_embedding"].to(unwrapped.spatial_type_embedding.device))
         unwrapped.layer_fusion_logits.data.copy_(checkpoint["layer_fusion_logits"].to(unwrapped.layer_fusion_logits.device))
         if "optimizer" in checkpoint:
-            optimizer.load_state_dict(checkpoint["optimizer"])
+            try:
+                optimizer.load_state_dict(checkpoint["optimizer"])
+            except ValueError as exc:
+                # Stage 2 adds prefix parameters to the optimizer. Model weights
+                # still resume, but a changed parameter-group layout requires a
+                # fresh optimizer state.
+                if accelerator.is_main_process:
+                    print(
+                        "Optimizer state not restored because trainable parameter "
+                        f"groups changed: {exc}"
+                    )
         global_step = int(checkpoint.get("step", 0))
 
     loss_weights = LossWeights()
