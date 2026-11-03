@@ -4,7 +4,7 @@
 
 The current architecture is specified in [docs/LSF_VLM_ARCHITECTURE.md](docs/LSF_VLM_ARCHITECTURE.md). The model uses LFM3-VL-2B as its pretrained vision-language backbone, a shared 64-token spatial workspace, language-conditioned task queries, and compact box/mask/depth/relation heads. Teacher models are for offline distillation only; they are not part of deployed inference.
 
-Before building the spatial heads, run the backbone probe:
+Inspect the LFM3 backbone interface before the unified smoke test:
 
     pip install -r requirements-lfm3.txt
     python experiments/lfm3_probe.py \
@@ -26,6 +26,95 @@ Run the spatial-core unit tests:
 Neither the integration gate nor the unit tests have been run on Kaggle yet. Record actual output, latency, and peak memory before starting the 50K teacher annotation job.
 
 The LFM3 environment is intentionally separate from the teacher environment. The existing teacher pipeline pins Transformers below 5, while the current LFM3 model card documents Transformers 5.21.0 or newer. Do not upgrade the teacher environment in place.
+
+## Phase 2: Unified spatial model and training
+
+The model implementation is in place for the first still-image path:
+
+- One LFM3 vision-tower execution; the same precomputed multimodal output is reused by the language model.
+- 64 continuous spatial latents are inserted after the LFM3 image block.
+- Entity slots share identity across boxes, masks, phrase grounding, and relation-graph nodes.
+- Entity queries attend both the 64 scene latents and the full projected patch memory.
+- One learned pixel feature tensor feeds entity-conditioned masks and relative-depth/uncertainty prediction.
+- The relation head consumes box geometry and per-entity depth/uncertainty summaries.
+- GroundingDINO, SAM, and Depth Anything are offline data teachers only; they are not loaded by LSF inference.
+
+### Environment
+
+Keep the LFM3/training environment separate from the teacher environment:
+
+    pip install -r requirements-lfm3.txt
+
+Do not reinstall PyTorch on Kaggle. Preserve the CUDA-enabled build supplied by the notebook image.
+
+### Integration gate
+
+Before training, run the one-image integration check on one T4:
+
+    python experiments/lsf_one_image_smoke.py \
+      --image /kaggle/input/test-images/test.jpg \
+      --output /kaggle/working/lsf_smoke_report.json
+
+It checks one vision-tower execution, 64 spatial tokens, finite mask/depth outputs, tensor shapes, parameter count, latency, and peak allocated/reserved VRAM.
+
+Run the CPU spatial tests:
+
+    python -m pytest -q tests/test_spatial_core.py tests/test_unified_dataset.py
+
+The repository changes have not yet been executed on Kaggle. Treat the integration report and test results as required acceptance evidence; do not assume they pass because the files exist.
+
+### Stage-1 spatial warmup
+
+After the teacher JSONL and image files have been exported as Kaggle Datasets, mount both datasets. The teacher dataset must contain `distilled.jsonl` and `depth_maps/`. The image dataset must contain the downloaded img2dataset shard folders.
+
+Example paths (replace the dataset slugs with your own Kaggle inputs):
+
+- `/kaggle/input/lsf-teacher/lsf_vlm_distillation/distilled.jsonl`
+- `/kaggle/input/lsf-teacher/lsf_vlm_distillation/depth_maps/`
+- `/kaggle/input/cc3m-images/cc3m_images/`
+
+Start with 256 records and a short run:
+
+    accelerate launch --multi_gpu --num_processes 2 train_spatial.py \
+      --train-jsonl /kaggle/input/lsf-teacher/lsf_vlm_distillation/distilled.jsonl \
+      --data-root /kaggle/input/lsf-teacher/lsf_vlm_distillation \
+      --image-root /kaggle/input/cc3m-images/cc3m_images \
+      --output-dir /kaggle/working/lsf_spatial_warmup \
+      --max-samples 256 \
+      --epochs 1 \
+      --gradient-accumulation-steps 8 \
+      --max-steps 20
+
+This stage freezes LFM3 and trains the spatial bridge, entity decoder, pixel decoder, depth head, and relation/phrase heads only when their annotations are present. The current CC3M teacher JSONL supplies weak boxes, SAM instance masks, and relative depth. It does not supply human-verified relation labels, so relation loss is skipped unless relation triplets are added to the JSONL.
+
+Inspect loss components, GPU memory, and several predicted overlays before increasing the sample count. A decreasing training loss is not a substitute for held-out evaluation.
+
+### Stage-2 language/spatial prefix adaptation
+
+Only after stage 1 is stable, enable the spatial prefix language objective:
+
+    accelerate launch --multi_gpu --num_processes 2 train_spatial.py \
+      --train-jsonl /kaggle/input/lsf-teacher/lsf_vlm_distillation/distilled.jsonl \
+      --data-root /kaggle/input/lsf-teacher/lsf_vlm_distillation \
+      --image-root /kaggle/input/cc3m-images/cc3m_images \
+      --output-dir /kaggle/working/lsf_spatial_prefix \
+      --resume /kaggle/input/lsf-spatial-warmup/lsf_spatial_step_00000020.pt \
+      --max-samples 256 \
+      --epochs 1 \
+      --gradient-accumulation-steps 4 \
+      --max-steps 10 \
+      --train-language-prefix
+
+This objective uses captions as weak text targets and allows gradients through the continuous spatial prefix while keeping LFM3 backbone weights frozen. It costs more memory because the frozen language model must retain the graph needed to backpropagate to the prefix. Profile before scaling.
+
+### Important supervision limits
+
+- CC3M captions do not enumerate all objects. Caption-conditioned GroundingDINO boxes are partial phrase labels, not exhaustive detections.
+- SAM outputs are pseudo masks; confidence filtering and human inspection are required.
+- Depth Anything V2 provides relative depth. It does not establish metric metres or justify an unaligned metric AbsRel claim.
+- The current teacher pipeline does not create ground-truth spatial relations. Add Visual Genome/SpatialSense-style relation annotations before claiming trained relation reasoning.
+- Add COCO/LVIS and RefCOCO-family human annotations for reliable instance masks and phrase grounding; add NYU Depth V2/KITTI metric depth if metric depth is a target.
+- Never use the same teacher's predictions as the final validation ground truth.
 
 ## Phase 1 teacher distillation (legacy preparation workflow)
 
