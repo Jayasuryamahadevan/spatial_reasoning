@@ -27,7 +27,7 @@ def make_core() -> LSFSpatialCore:
         perceiver_layers=2,
         entity_layers=2,
         pixel_dim=128,
-        num_relations=9,
+        num_relations=10,
     )
     return LSFSpatialCore(config)
 
@@ -50,7 +50,7 @@ def test_unified_spatial_shapes_and_finite_outputs() -> None:
     assert output["mask_logits"].shape == (1, 32, 16, 20)
     assert output["relative_inverse_depth"].shape == (1, 1, 64, 80)
     assert output["depth_log_variance"].shape == (1, 1, 64, 80)
-    assert output["relation_logits"].shape == (1, 32, 32, 9)
+    assert output["relation_logits"].shape == (1, 32, 32, 10)
     assert output["entity_phrase_logits"].shape == (1, 32, 2)
 
     for key in (
