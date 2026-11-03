@@ -133,7 +133,7 @@ def test_soft_spatial_tokens_are_inserted_without_changing_image_placeholders() 
 
 
 def test_relation_and_phrase_losses_are_finite() -> None:
-    relation_logits = torch.randn(1, 4, 4, 9, requires_grad=True)
+    relation_logits = torch.randn(1, 4, 4, 10, requires_grad=True)
     relation_targets = torch.full((1, 4, 4), -100, dtype=torch.long)
     relation_targets[0, 0, 1] = 1
     relation_targets[0, 1, 0] = 2
