@@ -60,7 +60,7 @@ Its get_image_features(pixel_values, image_grid_thw, ...) method:
 
 The vision model uses an output-capture decorator and declares hidden_states as recordable outputs. Thus output_hidden_states=True can expose intermediate vision-layer tensors. Those tensors share the same patch-grid resolution; they are not a hierarchical FPN.
 
-The outer LFM3 model forward accepts mm_encoder_outputs. When supplied, it uses the precomputed image output and skips get_image_features. It scatters pooler_output into the image placeholders and passes the resulting embeddings to the LFM3 language model.
+The outer LFM3 model forward accepts mm_encoder_outputs. When supplied, it uses the precomputed image output and skips get_image_features. It scatters pooler_output into the image placeholders and passes the resulting embeddings to the LFM3 language model. If input_ids is omitted but inputs_embeds is supplied, the current implementation identifies image placeholders by exact comparison with the learned image-token embedding. The adapter therefore preserves the original image-placeholder embeddings and inserts spatial soft tokens after vision_end; it must not overwrite or normalize the original image placeholder embeddings.
 
 This gives us a source-grounded one-vision-pass integration:
 
@@ -428,20 +428,28 @@ No proposed target metric is claimed achieved until the corresponding experiment
 ## 11. Implementation status and next gates
 
 Implemented in this repository:
-- lsf_vlm/modeling/spatial_core.py
-- lsf_vlm/modeling/lfm3_adapter.py (single vision-tower execution; now passes the full projected patch memory to entity queries)
-- lsf_vlm/training/losses.py
-- tests/test_spatial_core.py
+- lsf_vlm/modeling/spatial_core.py: Perceiver scene latents, full patch memory, shared entities, pixel decoder, masks, relative depth/uncertainty, and depth-conditioned relation head.
+- lsf_vlm/modeling/lfm3_adapter.py: one LFM3 vision-tower execution, precomputed multimodal-output reuse, and continuous spatial-prefix insertion.
+- lsf_vlm/training/losses.py and matching.py: focal/Dice masks, uncertainty-aware relative depth, Hungarian box matching, phrase/entity alignment, and mask/relation target remapping.
+- data/unified_dataset.py: partial-label JSONL loader with compressed COCO RLE and relative-depth loading.
+- train_spatial.py: Accelerate stage-1 spatial warmup and optional stage-2 spatial-prefix language objective.
+- tests/test_spatial_core.py and tests/test_unified_dataset.py.
+- .github/workflows/cpu-tests.yml and .github/workflows/spatial-core-tests.yml.
 
-Not yet validated:
-- loading the actual LFM3 checkpoint through the wrapper;
-- feature-grid reshaping on real processor output;
-- one-pass vision instrumentation;
-- unit-test execution in Kaggle;
-- training step on T4;
-- accuracy, latency and memory results.
+CPU verification:
+- GitHub Actions commit b845d367fee2fba3c6a283df317f5f816571ce7d: 12 tests passed, with one pycocotools/NumPy deprecation warning.
+- Both CPU workflow jobs completed successfully.
+- An earlier CPU run exposed a 2048-to-256 duplicate language-projection bug; it was corrected and the forward/gradient tests now pass.
 
-The next gate is the one-image LFM3 integration test, followed by the CPU shape/gradient tests. Do not generate 50K annotations until these gates pass.
+Still pending:
+- loading the actual LFM3 checkpoint through UnifiedLSFVLM;
+- verifying real processor image_grid_thw and patch-grid reshaping;
+- one-vision-call instrumentation on the real checkpoint;
+- T4/T4x2 smoke training and peak VRAM measurement;
+- validation against human/sensor-ground-truth datasets;
+- measured accuracy, edge latency, and total memory.
+
+The next gate is experiments/lsf_one_image_smoke.py on one Kaggle T4. Do not launch the 50K teacher run or claim benchmark targets before that gate and held-out data validation pass.
 
 ### X-Decoder — CVPR 2023
 
