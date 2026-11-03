@@ -56,7 +56,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--weight-decay", type=float, default=0.01)
     parser.add_argument("--gradient-accumulation-steps", type=int, default=8)
     parser.add_argument("--max-grad-norm", type=float, default=1.0)
-    parser.add_argument("--min-sam-iou", type=float, default=0.0)
+    parser.add_argument("--min-sam-iou", type=float, default=0.5)
     parser.add_argument("--min-mask-pixels", type=int, default=16)
     parser.add_argument("--max-objects", type=int, default=32)
     parser.add_argument("--log-every", type=int, default=10)
@@ -401,6 +401,11 @@ def main() -> None:
     # Stage 1 only updates the spatial core. Prefix projection is added in
     # stage 2 when language_path_grad is enabled.
     trainable_modules = [model.spatial]
+    trainable_parameters = [
+        parameter for parameter in model.spatial.parameters() if parameter.requires_grad
+    ]
+    # Learn the blend over LFM3's final four vision-layer feature taps.
+    trainable_parameters.append(model.layer_fusion_logits)
     if args.train_language_prefix:
         trainable_modules += [model.spatial_to_language]
         model.spatial_type_embedding.requires_grad_(True)
@@ -408,13 +413,12 @@ def main() -> None:
         model.spatial_to_language.requires_grad_(False)
         model.spatial_type_embedding.requires_grad_(False)
 
-    trainable_parameters = [
-        parameter
-        for module in trainable_modules
-        for parameter in module.parameters()
-        if parameter.requires_grad
-    ]
     if args.train_language_prefix:
+        trainable_parameters.extend(
+            parameter
+            for parameter in model.spatial_to_language.parameters()
+            if parameter.requires_grad
+        )
         trainable_parameters += [model.spatial_type_embedding]
     if not trainable_parameters:
         raise RuntimeError("No trainable LSF parameters were found.")
