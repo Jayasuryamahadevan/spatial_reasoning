@@ -313,7 +313,6 @@ class UnifiedLSFVLM(nn.Module):
             **spatial_outputs,
             "language_logits": logits,
             "past_key_values": language_outputs.past_key_values,
-            "image_hidden_states": language_outputs.image_hidden_states,
             "expanded_input_ids": new_ids,
             "expanded_attention_mask": new_attention,
             "labels": new_labels,
