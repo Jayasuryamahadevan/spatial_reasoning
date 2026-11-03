@@ -271,10 +271,11 @@ The current adapter exposes two explicit switches:
 Spatial losses still propagate through the spatial core and, when unfrozen, the LFM3 vision features. This is the desired initial routing.
 
 Initial stages:
-1. Freeze LFM3; train Perceiver, entity queries, pixel decoder, depth and relation heads.
-2. Add selected language-model LoRA only after inspecting the hybrid module names. Text loss trains LoRA. Spatial query context stays detached.
-3. Optionally unfreeze small vision adapters if dense-task performance requires it.
-4. Test joint gradient routing with parameter-group gradient assertions before broad training.
+1. **Spatial warm-up:** freeze LFM3. Use `language_path_grad=False` and `insert_spatial_prefix=False`; the language pass runs without autograd and supplies detached semantic context. Train the Perceiver, entity queries, pixel decoder, depth and relation heads. This avoids retaining 24-layer transformer activations on the first T4 run.
+2. **Soft-prefix adaptation:** enable `insert_spatial_prefix=True` and `language_path_grad=True`. The prefix projection starts at zero initialization and is learned from text loss. Keep `detach_spatial_prefix_input=True` so text loss does not alter the spatial latents through the language route.
+3. **Language adaptation:** inspect the real LFM3 module names, add LoRA only to supported attention/linear submodules, and train those adapters with text/structured-output losses. Spatial language context remains detached.
+4. Optionally unfreeze small vision adapters if dense-task performance requires it.
+5. Test joint gradient routing with parameter-group gradient assertions before broad training.
 
 Do not apply a generic all-attention QLoRA target list without inspecting LFM3's convolution and attention module structure.
 
