@@ -267,7 +267,8 @@ def run_masks(rows: list[dict[str, str]], output_dir: Path, acc: Accelerator, ar
 
             image = np.asarray(load_rgb(row["image_path"]))
             height, width = image.shape[:2]
-            predictor.set_image(image)
+            with torch.inference_mode(), acc.autocast():
+                predictor.set_image(image)
             boxes = box_record.get("boxes", [])
             instances, binary_masks = [], []
             if boxes:
@@ -405,6 +406,7 @@ def merge_outputs(rows: list[dict[str, str]], output_dir: Path, world_size: int)
             }
             item = {
                 "image_id": image_id,
+                "image_path": row["image_path"],
                 "text": row["text"],
                 "boxes": boxes.get("boxes", []),
                 "labels": boxes.get("labels", []),
