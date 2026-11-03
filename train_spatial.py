@@ -38,6 +38,7 @@ from lsf_vlm.training.losses import (
 from lsf_vlm.training.matching import (
     build_matched_mask_targets,
     matched_entity_box_losses,
+    remap_phrase_targets_to_entity_slots,
     remap_relation_targets_to_entity_slots,
 )
 
@@ -333,6 +334,7 @@ def save_checkpoint(
             "spatial_type_embedding": unwrapped.spatial_type_embedding.detach().cpu(),
             "layer_fusion_logits": unwrapped.layer_fusion_logits.detach().cpu(),
             "step": step,
+            "optimizer": optimizer.state_dict(),
             "parameter_report": unwrapped.parameter_report(),
         }
         torch.save(state, output_dir / f"lsf_spatial_step_{step:08d}.pt")
@@ -354,7 +356,7 @@ def main() -> None:
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         kwargs_handlers=[ddp_kwargs],
     )
-    set_seed(args.seed + accelerator.process_index)
+    set_seed(args.seed)
 
     dataset = UnifiedSpatialJsonlDataset(
         args.train_jsonl,
@@ -414,6 +416,7 @@ def main() -> None:
     )
     model, optimizer, loader = accelerator.prepare(model, optimizer, loader)
     model.train()
+    accelerator.unwrap_model(model).backbone.eval()
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     global_step = 0
@@ -424,6 +427,8 @@ def main() -> None:
         unwrapped.spatial_to_language.load_state_dict(checkpoint["spatial_to_language"])
         unwrapped.spatial_type_embedding.data.copy_(checkpoint["spatial_type_embedding"].to(unwrapped.spatial_type_embedding.device))
         unwrapped.layer_fusion_logits.data.copy_(checkpoint["layer_fusion_logits"].to(unwrapped.layer_fusion_logits.device))
+        if "optimizer" in checkpoint:
+            optimizer.load_state_dict(checkpoint["optimizer"])
         global_step = int(checkpoint.get("step", 0))
 
     loss_weights = LossWeights()
