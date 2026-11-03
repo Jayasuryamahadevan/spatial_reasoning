@@ -205,7 +205,6 @@ def prepare_processor_inputs(
     }
     if phrase_token_masks is not None:
         model_inputs["phrase_token_masks"] = phrase_token_masks
-        model_inputs["phrase_targets"] = phrase_targets
     if labels is not None:
         model_inputs["labels"] = labels.to(device)
     return model_inputs, question_mask.to(device), labels.to(device) if labels is not None else None, (resized_h, resized_w)
@@ -475,6 +474,7 @@ def main() -> None:
                 answer=answer,
                 phrases=phrase_pairs,
             )
+            phrase_targets = inputs.pop("phrase_targets", None)
             with accelerator.accumulate(model):
                 outputs = model(
                     **inputs,
@@ -489,7 +489,7 @@ def main() -> None:
                     accelerator.device,
                     train_language_prefix=args.train_language_prefix,
                     loss_weights=loss_weights,
-                    phrase_targets=inputs.get("phrase_targets"),
+                    phrase_targets=phrase_targets,
                 )
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
