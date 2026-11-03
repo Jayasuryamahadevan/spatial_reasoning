@@ -218,7 +218,7 @@ def test_hungarian_entity_matching_and_objectness_gradients() -> None:
 def test_depth_loss_handles_invalid_target_pixels() -> None:
     from lsf_vlm.training.losses import relative_depth_uncertainty_loss
 
-    prediction = torch.rand(1, 1, 8, 8, requires_grad=True) + 0.1
+    prediction = (torch.rand(1, 1, 8, 8) + 0.1).requires_grad_()
     log_variance = torch.zeros(1, 1, 8, 8, requires_grad=True)
     target = torch.rand(1, 1, 8, 8) + 0.1
     target[:, :, 0, 0] = float("nan")
@@ -228,7 +228,9 @@ def test_depth_loss_handles_invalid_target_pixels() -> None:
     losses["depth_total"].backward()
 
     assert torch.isfinite(losses["depth_total"])
-    assert prediction.grad is None or torch.isfinite(prediction.grad).all()
+    assert prediction.grad is not None
+    assert torch.isfinite(prediction.grad).all()
+    assert prediction.grad.abs().sum() > 0
 
 
 def test_masks_phrases_and_relations_reuse_hungarian_entity_slots() -> None:
