@@ -1,0 +1,37 @@
+name: LSF spatial core tests
+
+on:
+  push:
+    paths:
+      - "lsf_vlm/**"
+      - "tests/**"
+      - "requirements-lfm3.txt"
+      - ".github/workflows/spatial-core-tests.yml"
+  pull_request:
+    paths:
+      - "lsf_vlm/**"
+      - "tests/**"
+      - "requirements-lfm3.txt"
+      - ".github/workflows/spatial-core-tests.yml"
+  workflow_dispatch:
+
+jobs:
+  spatial-core:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install CPU PyTorch
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - name: Install LSF dependencies
+        run: python -m pip install -r requirements-lfm3.txt
+      - name: Compile source
+        run: python -m compileall -q lsf_vlm experiments
+      - name: Run spatial-core tests
+        run: pytest -q tests/test_spatial_core.py
