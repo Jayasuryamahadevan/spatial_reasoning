@@ -156,12 +156,12 @@ def relative_depth_uncertainty_loss(
     target = target_inverse_depth.float().clamp_min(1e-6).log()
     residual = pred - target
     if valid_mask is None:
-        valid = torch.isfinite(target)
+        valid = torch.isfinite(target) & (target_inverse_depth > 0)
     else:
         valid = valid_mask.bool()
         if valid.shape != target.shape:
             valid = F.interpolate(valid.float(), size=target.shape[-2:], mode="nearest").bool()
-        valid = valid & torch.isfinite(target)
+        valid = valid & torch.isfinite(target) & (target_inverse_depth > 0)
     valid_f = valid.to(residual.dtype)
     count = valid_f.sum(dim=(2, 3), keepdim=True).clamp_min(1.0)
     mean_residual = (residual * valid_f).sum(dim=(2, 3), keepdim=True) / count
