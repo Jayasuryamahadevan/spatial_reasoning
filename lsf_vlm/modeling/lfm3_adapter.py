@@ -46,6 +46,9 @@ class UnifiedLSFVLM(nn.Module):
         self.spatial_type_embedding = nn.Parameter(
             torch.zeros(1, self.config.num_spatial_latents, self.config.language_dim)
         )
+        # Start as a neutral prefix. Stage-2 language adaptation learns its scale/content.
+        nn.init.zeros_(self.spatial_to_language[-1].weight)
+        nn.init.zeros_(self.spatial_to_language[-1].bias)
         self.layer_fusion_logits = nn.Parameter(torch.zeros(4))
         self.freeze_backbone = freeze_backbone
         self.detach_spatial_language_context = detach_spatial_language_context
@@ -119,6 +122,7 @@ class UnifiedLSFVLM(nn.Module):
         language_hidden: Tensor,
         question_mask: Tensor | None,
         insertion_index: int,
+        prefix_inserted: bool,
     ) -> Tensor:
         if question_mask is None:
             # Fallback: pool all attended language tokens after the image block.
@@ -128,10 +132,11 @@ class UnifiedLSFVLM(nn.Module):
                 dtype=language_hidden.dtype,
             )
             mask[:, :insertion_index] = 0
-            mask[
-                :,
-                insertion_index : insertion_index + self.config.num_spatial_latents,
-            ] = 0
+            if prefix_inserted:
+                mask[
+                    :,
+                    insertion_index : insertion_index + self.config.num_spatial_latents,
+                ] = 0
         else:
             if question_mask.ndim != 2 or question_mask.shape[0] != 1:
                 raise ValueError("question_mask must be [1, original_sequence_length]")
@@ -160,12 +165,15 @@ class UnifiedLSFVLM(nn.Module):
         language_hidden: Tensor,
         phrase_token_masks: Tensor | None,
         insertion_index: int,
+        prefix_inserted: bool,
     ) -> Tensor | None:
         if phrase_token_masks is None:
             return None
         if phrase_token_masks.ndim != 3 or phrase_token_masks.shape[0] != 1:
             raise ValueError("phrase_token_masks must be [1,num_phrases,original_sequence_length]")
         if phrase_token_masks.shape[-1] == language_hidden.shape[1]:
+            masks = phrase_token_masks.to(language_hidden.device, language_hidden.dtype)
+        elif not prefix_inserted:
             masks = phrase_token_masks.to(language_hidden.device, language_hidden.dtype)
         else:
             zeros = torch.zeros(
@@ -200,6 +208,7 @@ class UnifiedLSFVLM(nn.Module):
         labels: Tensor | None = None,
         use_cache: bool = False,
         language_path_grad: bool | None = None,
+        insert_spatial_prefix: bool = True,
     ) -> dict[str, Any]:
         if input_ids.shape[0] != 1:
             raise ValueError("Initial LSF integration supports batch_size=1.")
@@ -232,27 +241,35 @@ class UnifiedLSFVLM(nn.Module):
         input_embeds = embedding_layer(input_ids)
         vision_end_id = int(self.backbone.config.vision_end_token_id)
         insertion_index = find_vision_end_insertion_index(input_ids, vision_end_id)
-        new_ids, new_embeds, new_attention = insert_soft_spatial_tokens(
-            input_ids=input_ids,
-            inputs_embeds=input_embeds,
-            attention_mask=attention_mask,
-            spatial_prefix=spatial_prefix,
-            insertion_index=insertion_index,
-            placeholder_token_id=int(self.backbone.config.pad_token_id),
-        )
+        if insert_spatial_prefix:
+            new_ids, new_embeds, new_attention = insert_soft_spatial_tokens(
+                input_ids=input_ids,
+                inputs_embeds=input_embeds,
+                attention_mask=attention_mask,
+                spatial_prefix=spatial_prefix,
+                insertion_index=insertion_index,
+                placeholder_token_id=int(self.backbone.config.pad_token_id),
+            )
+        else:
+            new_ids = input_ids
+            new_embeds = input_embeds
+            new_attention = attention_mask
 
         new_labels = None
         if labels is not None:
-            ignore = torch.full(
-                (labels.shape[0], self.config.num_spatial_latents),
-                -100,
-                dtype=labels.dtype,
-                device=labels.device,
-            )
-            new_labels = torch.cat(
-                (labels[:, :insertion_index], ignore, labels[:, insertion_index:]),
-                dim=1,
-            )
+            if insert_spatial_prefix:
+                ignore = torch.full(
+                    (labels.shape[0], self.config.num_spatial_latents),
+                    -100,
+                    dtype=labels.dtype,
+                    device=labels.device,
+                )
+                new_labels = torch.cat(
+                    (labels[:, :insertion_index], ignore, labels[:, insertion_index:]),
+                    dim=1,
+                )
+            else:
+                new_labels = labels
 
         # 4) Reuse the exact precomputed vision output. Passing mm_encoder_outputs
         #    prevents the LFM3 model from executing the vision tower a second time.
@@ -274,10 +291,10 @@ class UnifiedLSFVLM(nn.Module):
 
         # 5) Condition entity queries on the same LFM3 contextualized question.
         language_context = self._pool_language_context(
-            language_hidden, question_mask, insertion_index
+            language_hidden, question_mask, insertion_index, insert_spatial_prefix
         )
         phrase_contexts = self._pool_phrase_contexts(
-            language_hidden, phrase_token_masks, insertion_index
+            language_hidden, phrase_token_masks, insertion_index, insert_spatial_prefix
         )
         if self.detach_spatial_language_context:
             language_context = language_context.detach()
