@@ -297,6 +297,12 @@ class LSFSpatialCore(nn.Module):
         self.depth_head = DepthUncertaintyHead(self.config.pixel_dim)
         self.relation_head = SpatialRelationHead(self.config.spatial_dim, self.config.num_relations)
         self.language_to_spatial = nn.Linear(self.config.language_dim, self.config.spatial_dim)
+        self.language_phrase_to_spatial = nn.Linear(
+            self.config.language_dim, self.config.spatial_dim, bias=False
+        )
+        self.entity_phrase_proj = nn.Linear(
+            self.config.spatial_dim, self.config.spatial_dim, bias=False
+        )
         self.language_norm = nn.LayerNorm(self.config.spatial_dim)
 
     def encode_scene(self, vision_map: Tensor) -> Tensor:
@@ -308,6 +314,7 @@ class LSFSpatialCore(nn.Module):
         rgb: Tensor,
         language_context: Tensor | None = None,
         spatial_tokens: Tensor | None = None,
+        phrase_contexts: Tensor | None = None,
     ) -> dict[str, Tensor]:
         if vision_map.shape[0] != rgb.shape[0]:
             raise ValueError("vision_map and rgb batch sizes must match")
@@ -327,7 +334,20 @@ class LSFSpatialCore(nn.Module):
         relations = self.relation_head(
             entities["entity_tokens"], entities["boxes_xyxy_norm"]
         )
-        return {
+        phrase_logits = None
+        if phrase_contexts is not None:
+            if phrase_contexts.ndim != 3:
+                raise ValueError("phrase_contexts must be [B,num_phrases,language_dim]")
+            phrase_features = F.normalize(
+                self.language_phrase_to_spatial(phrase_contexts), dim=-1
+            )
+            entity_features = F.normalize(
+                self.entity_phrase_proj(entities["entity_tokens"]), dim=-1
+            )
+            phrase_logits = torch.einsum(
+                "bqd,bpd->bqp", entity_features, phrase_features
+            ) * (self.config.spatial_dim ** 0.5)
+        result = {
             "spatial_tokens": spatial_tokens,
             **entities,
             "mask_logits": mask_logits,
@@ -336,6 +356,9 @@ class LSFSpatialCore(nn.Module):
             "relation_logits": relations,
             "pixel_features": pixel_features,
         }
+        if phrase_logits is not None:
+            result["entity_phrase_logits"] = phrase_logits
+        return result
 
     def parameter_report(self) -> dict[str, Any]:
         total = sum(parameter.numel() for parameter in self.parameters())
