@@ -72,6 +72,7 @@ def prepare_processor_inputs(
     question: str,
     device: torch.device,
     dtype: torch.dtype,
+    patch_size: int,
     answer: str | None = None,
 ) -> tuple[dict[str, torch.Tensor], torch.Tensor, torch.Tensor | None, tuple[int, int]]:
     messages = [{
@@ -124,7 +125,6 @@ def prepare_processor_inputs(
     if grid.ndim != 2 or grid.shape[0] != 1 or int(grid[0, 0]) != 1:
         raise RuntimeError(f"Expected one still image; got image_grid_thw={grid.tolist()}")
 
-    patch_size = int(processor.image_processor.patch_size)
     resized_h = int(grid[0, 1]) * patch_size
     resized_w = int(grid[0, 2]) * patch_size
     resized = image.resize((resized_w, resized_h), Image.Resampling.BICUBIC)
@@ -393,6 +393,7 @@ def main() -> None:
                 question,
                 accelerator.device,
                 torch.float16,
+                patch_size=int(model.backbone.config.vision_config.patch_size),
                 answer=answer,
             )
             with accelerator.accumulate(model):
@@ -400,6 +401,7 @@ def main() -> None:
                     **inputs,
                     language_path_grad=language_prefix_grad,
                     insert_spatial_prefix=True,
+                    compute_language_logits=args.train_language_prefix,
                     use_cache=False,
                 )
                 loss, metrics = compute_losses(
