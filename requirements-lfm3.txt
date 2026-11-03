@@ -1,0 +1,7 @@
+# Isolated environment for the LFM3-VL backbone probe and LSF-VLM training.
+# Do not combine blindly with requirements.txt, which currently pins Transformers <5
+# for the GroundingDINO/SAM teacher pipeline.
+transformers>=5.21.0
+accelerate>=1.2
+safetensors
+Pillow>=10
