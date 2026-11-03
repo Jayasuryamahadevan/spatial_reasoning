@@ -229,3 +229,41 @@ def test_depth_loss_handles_invalid_target_pixels() -> None:
 
     assert torch.isfinite(losses["depth_total"])
     assert prediction.grad is None or torch.isfinite(prediction.grad).all()
+
+
+def test_masks_phrases_and_relations_reuse_hungarian_entity_slots() -> None:
+    from lsf_vlm.training.matching import (
+        build_matched_mask_targets,
+        remap_phrase_targets_to_entity_slots,
+        remap_relation_targets_to_entity_slots,
+    )
+
+    matches = [(
+        torch.tensor([1, 3], dtype=torch.long),
+        torch.tensor([0, 1], dtype=torch.long),
+    )]
+    gt_masks = [torch.stack((
+        torch.ones(8, 8),
+        torch.full((8, 8), 0.5),
+    ))]
+    mask_targets, valid_entities = build_matched_mask_targets(
+        matches, gt_masks, num_queries=4, output_size=(4, 4), device=torch.device("cpu")
+    )
+    assert mask_targets.shape == (1, 4, 4, 4)
+    assert valid_entities.tolist() == [[False, True, False, True]]
+    assert torch.all(mask_targets[0, 1] == 1.0)
+    assert torch.all(mask_targets[0, 3] == 0.5)
+
+    gt_relations = [torch.tensor([[0, 1], [2, 0]], dtype=torch.long)]
+    relation_targets = remap_relation_targets_to_entity_slots(
+        matches, gt_relations, num_queries=4, device=torch.device("cpu")
+    )
+    assert relation_targets[0, 1, 3].item() == 1
+    assert relation_targets[0, 3, 1].item() == 2
+    assert relation_targets[0, 1, 1].item() == -100
+
+    phrase_gt = torch.tensor([[1, 0, 9]], dtype=torch.long)
+    phrase_slots = remap_phrase_targets_to_entity_slots(
+        matches, phrase_gt, num_queries=4
+    )
+    assert phrase_slots.tolist() == [[3, 1, -100]]
