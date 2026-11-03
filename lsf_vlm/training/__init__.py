@@ -25,13 +25,19 @@ __all__ = [
 ]
 
 from .matching import (
+    build_matched_mask_targets,
     hungarian_match,
     matched_entity_box_losses,
     objectness_focal_loss,
+    remap_phrase_targets_to_entity_slots,
+    remap_relation_targets_to_entity_slots,
 )
 
 __all__ += [
+    "build_matched_mask_targets",
     "hungarian_match",
     "matched_entity_box_losses",
     "objectness_focal_loss",
+    "remap_phrase_targets_to_entity_slots",
+    "remap_relation_targets_to_entity_slots",
 ]
