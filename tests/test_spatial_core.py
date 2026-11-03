@@ -233,6 +233,30 @@ def test_depth_loss_handles_invalid_target_pixels() -> None:
     assert prediction.grad.abs().sum() > 0
 
 
+def test_partial_mask_targets_skip_invalid_sam_instances() -> None:
+    from lsf_vlm.training.matching import build_matched_mask_targets
+
+    matches = [(
+        torch.tensor([0, 2], dtype=torch.long),
+        torch.tensor([0, 1], dtype=torch.long),
+    )]
+    masks = [torch.stack((
+        torch.ones(8, 8),
+        torch.zeros(8, 8),
+    ))]
+    targets, valid = build_matched_mask_targets(
+        matches,
+        masks,
+        num_queries=3,
+        output_size=(4, 4),
+        device=torch.device("cpu"),
+        target_mask_valid=[torch.tensor([True, False])],
+    )
+    assert valid.tolist() == [[True, False, False]]
+    assert torch.all(targets[0, 0] == 1.0)
+    assert torch.all(targets[0, 2] == 0.0)
+
+
 def test_masks_phrases_and_relations_reuse_hungarian_entity_slots() -> None:
     from lsf_vlm.training.matching import (
         build_matched_mask_targets,
