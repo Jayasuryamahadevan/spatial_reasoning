@@ -6,6 +6,8 @@ on:
       - "lsf_vlm/**"
       - "tests/**"
       - "requirements-lfm3.txt"
+      - "train_spatial.py"
+      - "data/**"
       - ".github/workflows/spatial-core-tests.yml"
   pull_request:
     paths:
@@ -32,6 +34,6 @@ jobs:
       - name: Install LSF dependencies
         run: python -m pip install -r requirements-lfm3.txt
       - name: Compile source
-        run: python -m compileall -q lsf_vlm experiments
+        run: python -m compileall -q lsf_vlm data experiments train_spatial.py
       - name: Run spatial-core tests
-        run: pytest -q tests/test_spatial_core.py
+        run: PYTHONPATH=. python -m pytest -q tests/test_spatial_core.py tests/test_unified_dataset.py
