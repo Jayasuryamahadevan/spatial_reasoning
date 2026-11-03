@@ -122,3 +122,104 @@ def matched_entity_box_losses(
         "box_l1": box_l1,
         "box_giou": box_giou,
     }, matches
+
+
+def build_matched_mask_targets(
+    matches: Sequence[tuple[Tensor, Tensor]],
+    target_masks: Sequence[Tensor],
+    num_queries: int,
+    output_size: tuple[int, int],
+    device: torch.device,
+) -> tuple[Tensor, Tensor]:
+    """Scatter GT instance masks into the same predicted entity-slot order as boxes."""
+    import torch.nn.functional as F
+
+    if len(matches) != len(target_masks):
+        raise ValueError("matches and target_masks must have the same batch size")
+    height, width = output_size
+    batch_size = len(matches)
+    mask_targets = torch.zeros(
+        (batch_size, num_queries, height, width), device=device, dtype=torch.float32
+    )
+    valid_entities = torch.zeros(
+        (batch_size, num_queries), device=device, dtype=torch.bool
+    )
+    for batch_index, (source_indices, target_indices) in enumerate(matches):
+        masks = target_masks[batch_index].to(device=device, dtype=torch.float32)
+        if masks.ndim != 3:
+            raise ValueError("Each target mask tensor must be [N_i,H,W]")
+        if source_indices.numel() != target_indices.numel():
+            raise ValueError("Each assignment must contain equally many source and target indices")
+        if target_indices.numel() == 0:
+            continue
+        selected = masks[target_indices]
+        selected = F.interpolate(
+            selected.unsqueeze(1), size=(height, width), mode="nearest"
+        ).squeeze(1)
+        mask_targets[batch_index, source_indices] = selected
+        valid_entities[batch_index, source_indices] = True
+    return mask_targets, valid_entities
+
+
+def remap_relation_targets_to_entity_slots(
+    matches: Sequence[tuple[Tensor, Tensor]],
+    target_relations: Sequence[Tensor],
+    num_queries: int,
+    device: torch.device,
+    ignore_index: int = -100,
+) -> Tensor:
+    """Remap GT object-indexed relation labels into shared entity-query coordinates.
+
+    target_relations[b] is [N_gt,N_gt] with class 0 for an annotated no-relation
+    pair and ignore_index for pairs not annotated. This preserves the same
+    entity-slot identity as box and mask training.
+    """
+    if len(matches) != len(target_relations):
+        raise ValueError("matches and target_relations must have the same batch size")
+    output = torch.full(
+        (len(matches), num_queries, num_queries),
+        ignore_index,
+        device=device,
+        dtype=torch.long,
+    )
+    for batch_index, ((source_indices, target_indices), relation_matrix) in enumerate(
+        zip(matches, target_relations)
+    ):
+        relation_matrix = relation_matrix.to(device=device, dtype=torch.long)
+        if relation_matrix.ndim != 2 or relation_matrix.shape[0] != relation_matrix.shape[1]:
+            raise ValueError("Each target relation matrix must be square [N_gt,N_gt]")
+        for source_slot, target_object in zip(source_indices.tolist(), target_indices.tolist()):
+            if target_object >= relation_matrix.shape[0]:
+                raise ValueError("Target relation matrix does not cover matched target indices")
+            for object_slot, object_index in zip(source_indices.tolist(), target_indices.tolist()):
+                if object_index >= relation_matrix.shape[1]:
+                    raise ValueError("Target relation matrix does not cover matched target indices")
+                output[batch_index, source_slot, object_slot] = relation_matrix[
+                    target_object, object_index
+                ]
+    diagonal = torch.arange(num_queries, device=device)
+    output[:, diagonal, diagonal] = ignore_index
+    return output
+
+
+def remap_phrase_targets_to_entity_slots(
+    matches: Sequence[tuple[Tensor, Tensor]],
+    target_phrase_entities: Tensor,
+    num_queries: int,
+    ignore_index: int = -100,
+) -> Tensor:
+    """Map phrase -> GT object indices into phrase -> Hungarian-matched query slots."""
+    if target_phrase_entities.ndim != 2 or target_phrase_entities.shape[0] != len(matches):
+        raise ValueError("target_phrase_entities must be [B,num_phrases]")
+    result = torch.full_like(target_phrase_entities, ignore_index)
+    for batch_index, (source_indices, target_indices) in enumerate(matches):
+        gt_to_slot = {
+            int(target_index): int(source_index)
+            for source_index, target_index in zip(source_indices.tolist(), target_indices.tolist())
+        }
+        for phrase_index, target_object in enumerate(target_phrase_entities[batch_index].tolist()):
+            if target_object in gt_to_slot:
+                result[batch_index, phrase_index] = gt_to_slot[target_object]
+    if (result[result != ignore_index] >= num_queries).any():
+        raise RuntimeError("Mapped entity query index is out of range")
+    return result
