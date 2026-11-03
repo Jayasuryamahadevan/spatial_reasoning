@@ -51,8 +51,7 @@ Download the selected images. img2dataset writes image files and per-shard Parqu
       --thread_count 16 \
       --image_size 512 \
       --resize_mode keep_ratio_largest \
-      --retries 2 \
-      --enable_wandb False
+      --retries 2
 
 Build the manifest consumed by the teacher pipeline:
 
@@ -106,6 +105,7 @@ mask_rle is a COCO compressed RLE encoding for the union of all detected instanc
 ## 5. Resume after interruption
 
 Re-run the same command with the same output directory and the same number of processes. Completed image IDs are skipped independently for each stage. Keep the process count fixed at two while resuming.
+Kaggle sessions can end before the full annotation job finishes. The per-image checkpoints are resumable only while the output directory is retained. Before ending a session, export the output directory as a Kaggle Dataset or preserve it as a notebook output, then attach that saved output in the next session and continue with the same output directory and two-process configuration.
 
 Run only one stage with --stage boxes, --stage masks, or --stage depth. Rebuild the merged JSONL without rerunning teachers with --stage merge.
 
