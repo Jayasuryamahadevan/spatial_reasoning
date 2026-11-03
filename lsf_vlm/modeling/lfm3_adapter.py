@@ -105,7 +105,9 @@ class UnifiedLSFVLM(nn.Module):
                 f"tokens={candidate_layers[-1].shape[0]}, grid={height}x{width}."
             )
         count = len(candidate_layers)
-        weights = torch.softmax(self.layer_fusion_logits[-count:], dim=0)
+        weights = torch.softmax(self.layer_fusion_logits[-count:], dim=0).to(
+            device=candidate_layers[-1].device, dtype=candidate_layers[-1].dtype
+        )
         fused = sum(weight * state for weight, state in zip(weights, candidate_layers))
         channels = fused.shape[-1]
         return fused.reshape(1, height, width, channels).permute(0, 3, 1, 2).contiguous()
@@ -248,7 +250,7 @@ class UnifiedLSFVLM(nn.Module):
         # 4) Reuse the exact precomputed vision output. Passing mm_encoder_outputs
         #    prevents the LFM3 model from executing the vision tower a second time.
         language_outputs = self.backbone.model(
-            input_ids=new_ids,
+            input_ids=None,
             inputs_embeds=new_embeds,
             attention_mask=new_attention,
             mm_encoder_outputs={"image": vision_outputs},
