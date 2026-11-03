@@ -119,18 +119,35 @@ LSF adopts shared features, depth uncertainty, and uncertainty-aware distillatio
 
 Source: https://link.springer.com/article/10.1007/s11263-026-02751-0
 
+### MulT — CVPR 2022
+
+MulT is a direct precedent for joint dense prediction. It shares an image representation and uses cross-task attention for depth, semantic segmentation, reshading, surface normals, keypoints, and edges. This means "one encoder plus depth and segmentation heads" is not a novelty claim.
+
+LSF should go beyond parallel outputs: the same learned entity slots must bind language-grounded objects to their masks, boxes, depth summaries, and relation-graph nodes. The dense depth field and instance masks also share a pixel representation.
+
+Source: https://openaccess.thecvf.com/content/CVPR2022/html/Bhattacharjee_MulT_An_End-to-End_Multitask_Learning_Transformer_CVPR_2022_paper.html
+
+### UFO — NeurIPS 2025
+
+UFO is an especially close precedent. It unifies object-level detection, pixel-level segmentation, and image-level vision-language tasks through an open-ended language interface and an embedding-retrieval approach for masks. Its reported results demonstrate that an MLLM can be trained as one fine-grained perception model rather than a tool orchestrator.
+
+This rules out claiming that LSF is the first unified VLM for detection/segmentation. Our differentiated hypothesis must include dense monocular relative depth, a shared entity-indexed spatial graph, continuous spatial memory integrated into LFM3's causal sequence, and a deployment budget tested on constrained edge hardware.
+
+Source: https://proceedings.neurips.cc/paper_files/paper/2025/hash/78a241e1d2ff2366af8cc9a459875a01-Abstract-Conference.html
+
 ### Research novelty position
 
-A shared encoder, Perceiver latents, mask queries, and depth heads are not individually novel. We must not claim them as standalone inventions.
+A shared encoder, Perceiver latents, mask queries, task-conditioned prediction, and joint segmentation/depth are not individually novel. We must not claim them as standalone inventions.
 
 The research contribution to test is the combination of:
 - LFM3's hybrid native vision-language backbone;
+- one vision-tower execution whose unmerged patch memory is shared by the LFM3 language path, Perceiver, and dense heads;
 - continuous spatial latents inserted into the same causal language sequence;
-- one entity table shared by phrase grounding, boxes, masks, and relations;
+- one entity table shared by phrase grounding, boxes, masks, depth summaries, and relations;
 - one shared pixel feature tensor used for both masks and depth;
 - explicit gradient routing and edge-budgeted distillation.
 
-Whether this combination is novel enough for publication depends on literature review, ablations, and measured improvements. A paper must compare directly with unified pixel-language and segmentation/depth baselines.
+This is a research hypothesis, not a novelty guarantee. A systematic related-work search and direct ablations against UFO, X-Decoder, MulT, Mask2Former, and language-reasoning segmentation baselines are required before a publication claim.
 
 ## 3. Chosen LSF-VLM architecture
 
@@ -184,7 +201,7 @@ This is the central language/spatial integration. It is not a separate LLM call 
 
 The LFM3 prefill returns contextualized question states. The model pools the question span, projects it to width 256, and adds it to 32 learned entity queries.
 
-The entity decoder applies self-attention between entity queries and cross-attention to Z.
+The entity decoder applies self-attention between entity queries and cross-attention to the concatenation of Z and the full projected patch memory [B,N_patch,256]. This avoids asking 64 compressed scene tokens alone to localize small objects. The 64 latents carry global scene context; the full patch memory retains spatial detail for entity localization.
 
 Every entity slot produces:
 - entity embedding;
@@ -198,7 +215,7 @@ The same entity index is used for its mask and graph relations. This avoids disc
 
 The LFM3 vision tower has a flat patch grid at 1/16 scale; its intermediate layers are not a four-stage feature pyramid. We therefore do not claim that LFM3 itself provides high-resolution FPN features.
 
-The current integrated model adds a small RGB detail stem inside the same checkpoint:
+The current integrated model adds a small RGB detail stem inside the same checkpoint. LFM3's intermediate feature taps share one patch-grid resolution rather than forming an FPN, so the detail stem restores local image boundaries while the final/unmerged LFM3 map supplies semantic features.
 - two stride-2 convolution stages to reach 1/4 image resolution;
 - a projection of the unmerged LFM3 patch map;
 - bilinear fusion at 1/4 scale.
@@ -298,7 +315,7 @@ Conditional flow matching is not in the initial runtime model. It is an optional
 
 ## 8. Model-size and edge constraints
 
-The LFM3 base already has about 1.92B parameters. The current spatial core is deliberately small: the code reports exact parameter counts at runtime. Do not claim a final parameter total until UnifiedLSFVLM.parameter_report() is executed on the actual loaded checkpoint.
+The LFM3 base already has about 1.92B parameters. The current spatial core is deliberately compact, but the adapter also introduces spatial-to-language projection and type embeddings; the final parameter report must include every module. Do not claim a final parameter total until UnifiedLSFVLM.parameter_report() is executed on the actual loaded checkpoint. LFM3-VL is listed under the LFM Open License v1.0; review that license and every dataset/teacher license before redistributing weights or building a commercial artifact.
 
 The official LFM3-VL ONNX card reports a Q4 decoder + Q8 vision package around 1.69 GB and a Q4 decoder + FP16 vision GPU package around 1.69 GB. These are artifact sizes, not total runtime RAM/VRAM.
 
@@ -352,7 +369,7 @@ No proposed target metric is claimed achieved until the corresponding experiment
 
 Implemented in this repository:
 - lsf_vlm/modeling/spatial_core.py
-- lsf_vlm/modeling/lfm3_adapter.py
+- lsf_vlm/modeling/lfm3_adapter.py (single vision-tower execution; now passes the full projected patch memory to entity queries)
 - lsf_vlm/training/losses.py
 - tests/test_spatial_core.py
 
