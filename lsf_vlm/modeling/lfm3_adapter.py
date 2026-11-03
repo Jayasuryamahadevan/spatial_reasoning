@@ -209,6 +209,7 @@ class UnifiedLSFVLM(nn.Module):
         use_cache: bool = False,
         language_path_grad: bool | None = None,
         insert_spatial_prefix: bool = True,
+        compute_language_logits: bool = True,
     ) -> dict[str, Any]:
         if input_ids.shape[0] != 1:
             raise ValueError("Initial LSF integration supports batch_size=1.")
@@ -286,7 +287,7 @@ class UnifiedLSFVLM(nn.Module):
                 return_dict=True,
             )
         language_hidden = language_outputs.last_hidden_state
-        logits = self.backbone.lm_head(language_hidden)
+        logits = self.backbone.lm_head(language_hidden) if compute_language_logits else None
         rgb = rgb.to(device=vision_map.device, dtype=vision_map.dtype)
 
         # 5) Condition entity queries on the same LFM3 contextualized question.
