@@ -47,6 +47,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--train-jsonl", type=Path, required=True)
     parser.add_argument("--data-root", type=Path, default=None)
+    parser.add_argument("--image-root", type=Path, default=None)
     parser.add_argument("--model", default="LiquidAI/LFM3-VL-2B")
     parser.add_argument("--output-dir", type=Path, default=Path("outputs/lsf_spatial"))
     parser.add_argument("--max-samples", type=int, default=0)
@@ -366,6 +367,7 @@ def main() -> None:
     dataset = UnifiedSpatialJsonlDataset(
         args.train_jsonl,
         data_root=args.data_root,
+        image_root=args.image_root,
         max_samples=args.max_samples or None,
         min_sam_iou=args.min_sam_iou,
         min_mask_pixels=args.min_mask_pixels,
