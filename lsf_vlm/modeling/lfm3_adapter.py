@@ -28,6 +28,8 @@ class UnifiedLSFVLM(nn.Module):
         lfm3_backbone: nn.Module,
         spatial_config: SpatialCoreConfig | None = None,
         freeze_backbone: bool = True,
+        detach_spatial_language_context: bool = True,
+        detach_spatial_prefix_input: bool = True,
     ) -> None:
         super().__init__()
         self.backbone = lfm3_backbone
@@ -45,6 +47,8 @@ class UnifiedLSFVLM(nn.Module):
         )
         self.layer_fusion_logits = nn.Parameter(torch.zeros(4))
         self.freeze_backbone = freeze_backbone
+        self.detach_spatial_language_context = detach_spatial_language_context
+        self.detach_spatial_prefix_input = detach_spatial_prefix_input
         if freeze_backbone:
             for parameter in self.backbone.parameters():
                 parameter.requires_grad_(False)
@@ -80,6 +84,8 @@ class UnifiedLSFVLM(nn.Module):
         }
         if device_map is not None:
             load_kwargs["device_map"] = device_map
+        elif torch.cuda.is_available():
+            load_kwargs["device_map"] = {"": 0}
         backbone = AutoModelForImageTextToText.from_pretrained(model_id, **load_kwargs)
         return cls(backbone, spatial_config=spatial_config, freeze_backbone=freeze_backbone)
 
@@ -169,7 +175,8 @@ class UnifiedLSFVLM(nn.Module):
 
         # 2) Produce the canonical spatial memory.
         spatial_tokens = self.spatial.encode_scene(vision_map)
-        spatial_prefix = self.spatial_to_language(spatial_tokens) + self.spatial_type_embedding
+        prefix_source = spatial_tokens.detach() if self.detach_spatial_prefix_input else spatial_tokens
+        spatial_prefix = self.spatial_to_language(prefix_source) + self.spatial_type_embedding
 
         # 3) Insert spatial latents into the causal LFM3 sequence immediately after
         #    the image block. These are continuous embeddings, not generated text.
@@ -218,6 +225,8 @@ class UnifiedLSFVLM(nn.Module):
         language_context = self._pool_language_context(
             language_hidden, question_mask, insertion_index
         )
+        if self.detach_spatial_language_context:
+            language_context = language_context.detach()
         spatial_outputs = self.spatial(
             vision_map=vision_map,
             rgb=rgb,
