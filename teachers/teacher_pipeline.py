@@ -184,7 +184,9 @@ def run_boxes(rows: list[dict[str, str]], output_dir: Path, acc: Accelerator, ar
             )[0]
             boxes = result["boxes"].detach().float().cpu().numpy()
             scores = result["scores"].detach().float().cpu().numpy()
-            labels = result["labels"]
+            # Transformers >=4.51 returns integer IDs from "labels";
+            # "text_labels" preserves the grounded phrases.
+            labels = result.get("text_labels") or result.get("labels", [])
             order = np.argsort(scores)[::-1][:args.max_detections]
             kept_boxes, kept_scores, kept_labels = [], [], []
             for index in order:
