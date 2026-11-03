@@ -130,12 +130,15 @@ def build_matched_mask_targets(
     num_queries: int,
     output_size: tuple[int, int],
     device: torch.device,
+    target_mask_valid: Sequence[Tensor] | None = None,
 ) -> tuple[Tensor, Tensor]:
     """Scatter GT instance masks into the same predicted entity-slot order as boxes."""
     import torch.nn.functional as F
 
     if len(matches) != len(target_masks):
         raise ValueError("matches and target_masks must have the same batch size")
+    if target_mask_valid is not None and len(target_mask_valid) != len(target_masks):
+        raise ValueError("target_mask_valid must have the same batch size")
     height, width = output_size
     batch_size = len(matches)
     mask_targets = torch.zeros(
@@ -152,12 +155,25 @@ def build_matched_mask_targets(
             raise ValueError("Each assignment must contain equally many source and target indices")
         if target_indices.numel() == 0:
             continue
-        selected = masks[target_indices]
+        if target_mask_valid is None:
+            valid_targets = torch.ones(
+                masks.shape[0], dtype=torch.bool, device=device
+            )
+        else:
+            valid_targets = target_mask_valid[batch_index].to(device=device, dtype=torch.bool)
+            if valid_targets.shape != (masks.shape[0],):
+                raise ValueError("Each target_mask_valid tensor must have shape [N_i]")
+        keep = valid_targets[target_indices]
+        if not keep.any():
+            continue
+        kept_sources = source_indices[keep]
+        kept_targets = target_indices[keep]
+        selected = masks[kept_targets]
         selected = F.interpolate(
             selected.unsqueeze(1), size=(height, width), mode="nearest"
         ).squeeze(1)
-        mask_targets[batch_index, source_indices] = selected
-        valid_entities[batch_index, source_indices] = True
+        mask_targets[batch_index, kept_sources] = selected
+        valid_entities[batch_index, kept_sources] = True
     return mask_targets, valid_entities
 
 
