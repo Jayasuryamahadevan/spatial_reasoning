@@ -98,18 +98,27 @@ class PerceiverSpatialBridge(nn.Module):
         yy, xx = torch.meshgrid(y, x, indexing="ij")
         return torch.stack((xx, yy), dim=-1).reshape(1, height * width, 2)
 
-    def forward(self, vision_map: Tensor) -> Tensor:
+    def encode_visual_memory(self, vision_map: Tensor) -> Tensor:
+        """Project the full unmerged patch grid for entity-level localization."""
         if vision_map.ndim != 4:
             raise ValueError(f"vision_map must be [B,C,H,W], got {tuple(vision_map.shape)}")
-        batch, channels, height, width = vision_map.shape
+        _, _, height, width = vision_map.shape
         tokens = vision_map.flatten(2).transpose(1, 2)
         tokens = self.input_proj(tokens)
         coords = self._coordinates(height, width, tokens.device, tokens.dtype)
-        tokens = tokens + self.position_proj(coords)
-        queries = self.latent_queries.expand(batch, -1, -1)
+        return tokens + self.position_proj(coords)
+
+    def forward(
+        self, vision_map: Tensor, return_memory: bool = False
+    ) -> Tensor | tuple[Tensor, Tensor]:
+        visual_memory = self.encode_visual_memory(vision_map)
+        queries = self.latent_queries.expand(vision_map.shape[0], -1, -1)
         for block in self.blocks:
-            queries = block(queries, tokens)
-        return self.output_norm(queries)
+            queries = block(queries, visual_memory)
+        spatial_tokens = self.output_norm(queries)
+        if return_memory:
+            return spatial_tokens, visual_memory
+        return spatial_tokens
 
 
 class EntityDecoderBlock(nn.Module):
@@ -158,15 +167,27 @@ class EntityDecoder(nn.Module):
             nn.Linear(dim, 4),
         )
 
-    def forward(self, spatial_tokens: Tensor, language_context: Tensor | None) -> dict[str, Tensor]:
+    def forward(
+        self,
+        spatial_tokens: Tensor,
+        language_context: Tensor | None,
+        visual_memory: Tensor | None = None,
+    ) -> dict[str, Tensor]:
         batch = spatial_tokens.shape[0]
         entities = self.entity_queries.expand(batch, -1, -1)
         if language_context is not None:
             if language_context.ndim == 3:
                 language_context = language_context.mean(dim=1)
             entities = entities + self.language_proj(language_context).unsqueeze(1)
+
+        # Keep the 64-token scene workspace, but let entity slots also inspect
+        # the full projected patch grid. This avoids forcing precise localization
+        # through a 64-token bottleneck.
+        memory = spatial_tokens
+        if visual_memory is not None:
+            memory = torch.cat((spatial_tokens, visual_memory), dim=1)
         for block in self.blocks:
-            entities = block(entities, spatial_tokens)
+            entities = block(entities, memory)
         entities = self.norm(entities)
 
         # Predict center-x, center-y, width, height, then convert to ordered xyxy.
@@ -321,8 +342,10 @@ class LSFSpatialCore(nn.Module):
         )
         self.language_norm = nn.LayerNorm(self.config.spatial_dim)
 
-    def encode_scene(self, vision_map: Tensor) -> Tensor:
-        return self.spatial_bridge(vision_map)
+    def encode_scene(
+        self, vision_map: Tensor, return_memory: bool = False
+    ) -> Tensor | tuple[Tensor, Tensor]:
+        return self.spatial_bridge(vision_map, return_memory=return_memory)
 
     def forward(
         self,
@@ -331,6 +354,7 @@ class LSFSpatialCore(nn.Module):
         language_context: Tensor | None = None,
         spatial_tokens: Tensor | None = None,
         phrase_contexts: Tensor | None = None,
+        visual_memory: Tensor | None = None,
     ) -> dict[str, Tensor]:
         if vision_map.shape[0] != rgb.shape[0]:
             raise ValueError("vision_map and rgb batch sizes must match")
@@ -339,8 +363,17 @@ class LSFSpatialCore(nn.Module):
         if language_context is not None:
             language_context = self.language_norm(self.language_to_spatial(language_context))
 
-        spatial_tokens = spatial_tokens if spatial_tokens is not None else self.encode_scene(vision_map)
-        entities = self.entity_decoder(spatial_tokens, language_context)
+        if spatial_tokens is None:
+            spatial_tokens, encoded_memory = self.spatial_bridge(
+                vision_map, return_memory=True
+            )
+            if visual_memory is None:
+                visual_memory = encoded_memory
+        elif visual_memory is None:
+            visual_memory = self.spatial_bridge.encode_visual_memory(vision_map)
+        entities = self.entity_decoder(
+            spatial_tokens, language_context, visual_memory=visual_memory
+        )
         pixel_features, mask_logits = self.pixel_decoder(
             vision_map, rgb, entities["entity_tokens"]
         )
