@@ -131,59 +131,70 @@ def matched_box_loss(predicted: Tensor, target: Tensor) -> dict[str, Tensor]:
 
 
 def relative_depth_uncertainty_loss(
-    predicted_inverse_depth: Tensor,
+    predicted_relative_depth: Tensor,
     log_variance: Tensor,
-    target_inverse_depth: Tensor,
+    target_relative_depth: Tensor,
     valid_mask: Tensor | None = None,
     smoothness_weight: float = 0.05,
 ) -> dict[str, Tensor]:
-    if predicted_inverse_depth.shape != target_inverse_depth.shape:
-        target_inverse_depth = F.interpolate(
-            target_inverse_depth.float(),
-            size=predicted_inverse_depth.shape[-2:],
-            mode="bilinear",
-            align_corners=False,
-        )
-    if log_variance.shape != predicted_inverse_depth.shape:
-        log_variance = F.interpolate(
-            log_variance.float(),
-            size=predicted_inverse_depth.shape[-2:],
-            mode="bilinear",
-            align_corners=False,
-        )
-
-    pred = predicted_inverse_depth.float().clamp_min(1e-6).log()
-    target = target_inverse_depth.float().clamp_min(1e-6).log()
-    residual = pred - target
+    target = target_relative_depth.float()
     if valid_mask is None:
-        valid = torch.isfinite(target) & (target_inverse_depth > 0)
+        valid = torch.isfinite(target) & (target > 0)
     else:
         valid = valid_mask.bool()
         if valid.shape != target.shape:
             valid = F.interpolate(valid.float(), size=target.shape[-2:], mode="nearest").bool()
-        valid = valid & torch.isfinite(target) & (target_inverse_depth > 0)
-    valid_f = valid.to(residual.dtype)
+        valid = valid & torch.isfinite(target) & (target > 0)
+
+    safe_target = torch.where(valid, target, torch.ones_like(target))
+    if predicted_relative_depth.shape != safe_target.shape:
+        safe_target = F.interpolate(
+            safe_target, size=predicted_relative_depth.shape[-2:],
+            mode="bilinear", align_corners=False,
+        )
+        valid = F.interpolate(
+            valid.float(), size=predicted_relative_depth.shape[-2:], mode="nearest"
+        ).bool()
+    if log_variance.shape != predicted_relative_depth.shape:
+        log_variance = F.interpolate(
+            log_variance.float(), size=predicted_relative_depth.shape[-2:],
+            mode="bilinear", align_corners=False,
+        )
+
+    pred = predicted_relative_depth.float().clamp_min(1e-6).log()
+    target_log = safe_target.clamp_min(1e-6).log()
+    valid = valid & torch.isfinite(target_log) & torch.isfinite(pred)
+    valid_f = valid.to(pred.dtype)
     count = valid_f.sum(dim=(2, 3), keepdim=True).clamp_min(1.0)
-    mean_residual = (residual * valid_f).sum(dim=(2, 3), keepdim=True) / count
-    scale_invariant = residual - mean_residual
+
+    residual = torch.where(valid, pred - target_log, torch.zeros_like(pred))
+    mean_residual = residual.sum(dim=(2, 3), keepdim=True) / count
+    scale_invariant = torch.where(
+        valid, residual - mean_residual, torch.zeros_like(residual)
+    )
+
     variance = log_variance.float().clamp(-8.0, 8.0)
     nll = 0.5 * (torch.exp(-variance) * scale_invariant.square() + variance)
     depth_nll = (nll * valid_f).sum() / valid_f.sum().clamp_min(1.0)
 
+    # Invalid target locations are excluded from the target-edge weighting.
+    target_for_smoothness = torch.where(valid, target_log, pred.detach())
     dx = (pred[..., :, 1:] - pred[..., :, :-1]).abs()
     dy = (pred[..., 1:, :] - pred[..., :-1, :]).abs()
-    target_dx = (target[..., :, 1:] - target[..., :, :-1]).abs()
-    target_dy = (target[..., 1:, :] - target[..., :-1, :]).abs()
-    smooth_x = (dx * torch.exp(-target_dx)).mean()
-    smooth_y = (dy * torch.exp(-target_dy)).mean()
+    target_dx = (target_for_smoothness[..., :, 1:] - target_for_smoothness[..., :, :-1]).abs()
+    target_dy = (target_for_smoothness[..., 1:, :] - target_for_smoothness[..., :-1, :]).abs()
+    valid_x = (valid[..., :, 1:] & valid[..., :, :-1]).to(pred.dtype)
+    valid_y = (valid[..., 1:, :] & valid[..., :-1, :]).to(pred.dtype)
+    smooth_x = (dx * torch.exp(-target_dx) * valid_x).sum() / valid_x.sum().clamp_min(1.0)
+    smooth_y = (dy * torch.exp(-target_dy) * valid_y).sum() / valid_y.sum().clamp_min(1.0)
     smoothness = smooth_x + smooth_y
+
     total = depth_nll + smoothness_weight * smoothness
     return {
         "depth_nll": depth_nll,
         "depth_smoothness": smoothness,
         "depth_total": total,
     }
-
 
 def relation_classification_loss(logits: Tensor, targets: Tensor) -> Tensor:
     if logits.ndim != 4 or targets.ndim != 3:
