@@ -1,4 +1,21 @@
-# LSF-VLM: Phase 1 teacher distillation
+# LSF-VLM: Unified Edge Spatial Reasoning
+
+## Architecture direction
+
+The current architecture is specified in [docs/LSF_VLM_ARCHITECTURE.md](docs/LSF_VLM_ARCHITECTURE.md). The model uses LFM3-VL-2B as its pretrained vision-language backbone, a shared 64-token spatial workspace, language-conditioned task queries, and compact box/mask/depth/relation heads. Teacher models are for offline distillation only; they are not part of deployed inference.
+
+Before building the spatial heads, run the backbone probe:
+
+    pip install -r requirements-lfm3.txt
+    python experiments/lfm3_probe.py \
+      --image /path/to/test.jpg \
+      --question "Where is the red cup relative to the laptop?" \
+      --output /tmp/lfm3_probe.json
+
+The LFM3 environment is intentionally separate from the teacher environment. The existing teacher pipeline pins Transformers below 5, while the current LFM3 model card documents Transformers 5.21.0 or newer. Do not upgrade the teacher environment in place.
+
+## Phase 1 teacher distillation (legacy preparation workflow)
+
 
 This repository contains a resumable annotation pipeline for a 50K-image CC3M subset.
 
