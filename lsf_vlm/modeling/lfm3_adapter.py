@@ -214,8 +214,12 @@ class UnifiedLSFVLM(nn.Module):
         )
         vision_map = self._vision_map(vision_outputs, image_grid_thw)
 
-        # 2) Produce the canonical spatial memory.
-        spatial_tokens = self.spatial.encode_scene(vision_map)
+        # 2) Produce the canonical spatial memory and the projected full patch
+        #    context. The 64 latents are global scene context; entity queries
+        #    also attend to the full patch memory for precise localization.
+        spatial_tokens, visual_memory = self.spatial.encode_scene(
+            vision_map, return_memory=True
+        )
         prefix_source = spatial_tokens.detach() if self.detach_spatial_prefix_input else spatial_tokens
         spatial_prefix = self.spatial_to_language(prefix_source) + self.spatial_type_embedding
 
@@ -278,6 +282,7 @@ class UnifiedLSFVLM(nn.Module):
             rgb=rgb,
             language_context=language_context,
             spatial_tokens=spatial_tokens,
+            visual_memory=visual_memory,
             phrase_contexts=phrase_contexts,
         )
 
