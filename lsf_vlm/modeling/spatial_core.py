@@ -8,6 +8,20 @@ from torch import Tensor, nn
 from torch.nn import functional as F
 
 
+RELATION_LABELS = (
+    "no_relation",
+    "left_of",
+    "right_of",
+    "above",
+    "below",
+    "inside",
+    "contains",
+    "overlaps",
+    "in_front_of",
+    "behind",
+)
+
+
 @dataclass(frozen=True)
 class SpatialCoreConfig:
     vision_dim: int = 1024
@@ -19,7 +33,7 @@ class SpatialCoreConfig:
     perceiver_layers: int = 2
     entity_layers: int = 2
     pixel_dim: int = 128
-    num_relations: int = 9
+    num_relations: int = 10
     output_stride: int = 4
 
     def validate(self) -> None:
@@ -29,6 +43,8 @@ class SpatialCoreConfig:
             raise ValueError("Token and entity counts must be positive")
         if self.output_stride != 4:
             raise ValueError("The initial detail stem supports output_stride=4")
+        if self.num_relations != len(RELATION_LABELS):
+            raise ValueError(f"num_relations must be {len(RELATION_LABELS)} for the defined predicate vocabulary")
 
 
 class PerceiverBlock(nn.Module):
