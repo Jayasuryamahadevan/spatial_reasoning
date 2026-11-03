@@ -356,6 +356,8 @@ class UnifiedLSFVLM(nn.Module):
             generated.append(next_token)
             if eos_ids and int(next_token[0, 0].item()) in eos_ids:
                 break
+            if len(generated) >= max_new_tokens:
+                break
 
             attention_mask = torch.cat(
                 (
@@ -403,6 +405,7 @@ class UnifiedLSFVLM(nn.Module):
         return {
             "backbone_parameters": backbone_total,
             "spatial_core_parameters": spatial_total,
+            "spatial_addon_parameters": total - backbone_total,
             "model_parameters_total": total,
             "model_parameters_trainable": trainable,
         }
