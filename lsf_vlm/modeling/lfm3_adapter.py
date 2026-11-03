@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import torch
@@ -85,7 +86,8 @@ class UnifiedLSFVLM(nn.Module):
         if device_map is not None:
             load_kwargs["device_map"] = device_map
         elif torch.cuda.is_available():
-            load_kwargs["device_map"] = {"": 0}
+            local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+            load_kwargs["device_map"] = {"": local_rank}
         backbone = AutoModelForImageTextToText.from_pretrained(model_id, **load_kwargs)
         return cls(backbone, spatial_config=spatial_config, freeze_backbone=freeze_backbone)
 
@@ -197,6 +199,7 @@ class UnifiedLSFVLM(nn.Module):
         phrase_token_masks: Tensor | None = None,
         labels: Tensor | None = None,
         use_cache: bool = False,
+        language_path_grad: bool | None = None,
     ) -> dict[str, Any]:
         if input_ids.shape[0] != 1:
             raise ValueError("Initial LSF integration supports batch_size=1.")
@@ -253,15 +256,18 @@ class UnifiedLSFVLM(nn.Module):
 
         # 4) Reuse the exact precomputed vision output. Passing mm_encoder_outputs
         #    prevents the LFM3 model from executing the vision tower a second time.
-        language_outputs = self.backbone.model(
-            input_ids=None,
-            inputs_embeds=new_embeds,
-            attention_mask=new_attention,
-            mm_encoder_outputs={"image": vision_outputs},
-            output_hidden_states=False,
-            use_cache=use_cache,
-            return_dict=True,
-        )
+        if language_path_grad is None:
+            language_path_grad = not self.freeze_backbone
+        with torch.set_grad_enabled(torch.is_grad_enabled() and language_path_grad):
+            language_outputs = self.backbone.model(
+                input_ids=None,
+                inputs_embeds=new_embeds,
+                attention_mask=new_attention,
+                mm_encoder_outputs={"image": vision_outputs},
+                output_hidden_states=False,
+                use_cache=use_cache,
+                return_dict=True,
+            )
         language_hidden = language_outputs.last_hidden_state
         logits = self.backbone.lm_head(language_hidden)
         rgb = rgb.to(device=vision_map.device, dtype=vision_map.dtype)
