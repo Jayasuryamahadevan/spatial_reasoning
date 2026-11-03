@@ -106,7 +106,11 @@ def read_jsonl_map(path: Path) -> dict[str, dict[str, Any]]:
         with path.open("r", encoding="utf-8") as handle:
             for line in handle:
                 if line.strip():
-                    item = json.loads(line)
+                    try:
+                        item = json.loads(line)
+                    except json.JSONDecodeError:
+                        LOG.warning("Ignoring an incomplete checkpoint line in %s", path)
+                        continue
                     records[str(item["image_id"])] = item
     return records
 
@@ -120,7 +124,9 @@ def append_jsonl(path: Path, item: dict[str, Any]) -> None:
 
 def stage_todo(rows: list[dict[str, str]], stage_file: Path) -> list[dict[str, str]]:
     done = read_jsonl_map(stage_file)
-    return [row for row in rows if row["image_id"] not in done]
+    # Retry failed/upstream-error records on the next invocation; only status=ok is final.
+    completed_ids = {image_id for image_id, item in done.items() if item.get("status") == "ok"}
+    return [row for row in rows if row["image_id"] not in completed_ids]
 
 
 def load_rgb(image_path: str) -> Image.Image:
