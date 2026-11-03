@@ -1,0 +1,8 @@
+# Preserve the CUDA-enabled torch/torchvision preinstalled by Kaggle.
+accelerate>=1.2,<2
+transformers>=4.52,<5
+safetensors>=0.4
+numpy>=1.26
+Pillow>=10
+tqdm>=4.66
+pycocotools>=2.0.7
