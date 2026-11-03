@@ -73,6 +73,42 @@ def test_unified_spatial_shapes_and_finite_outputs() -> None:
     assert (output["relative_depth"] > 0).all()
 
 
+
+def test_perceiver_returns_fixed_scene_tokens_and_full_patch_memory() -> None:
+    torch.manual_seed(19)
+    model = make_core().eval()
+    vision = torch.randn(1, 1024, 9, 13)
+
+    with torch.no_grad():
+        scene_tokens, visual_memory = model.spatial_bridge(vision, return_memory=True)
+
+    assert scene_tokens.shape == (1, 64, 256)
+    assert visual_memory.shape == (1, 9 * 13, 256)
+    assert torch.isfinite(scene_tokens).all()
+    assert torch.isfinite(visual_memory).all()
+
+
+def test_entity_decoder_uses_full_patch_context() -> None:
+    torch.manual_seed(23)
+    model = make_core().eval()
+    vision = torch.randn(1, 1024, 8, 8)
+    rgb = torch.rand(1, 3, 64, 64)
+    language = torch.randn(1, 2048)
+
+    with torch.no_grad():
+        scene_tokens, visual_memory = model.spatial_bridge(vision, return_memory=True)
+        output = model(
+            vision,
+            rgb,
+            language,
+            spatial_tokens=scene_tokens,
+            visual_memory=visual_memory,
+        )
+
+    assert output["entity_tokens"].shape == (1, 32, 256)
+    assert torch.isfinite(output["boxes_xyxy_norm"]).all()
+
+
 def test_spatial_losses_backpropagate_into_shared_core() -> None:
     torch.manual_seed(11)
     model = make_core().train()
