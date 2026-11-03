@@ -69,7 +69,7 @@ class UnifiedSpatialJsonlDataset(Dataset):
         data_root: str | Path | None = None,
         image_root: str | Path | None = None,
         max_samples: int | None = None,
-        min_sam_iou: float = 0.0,
+        min_sam_iou: float = 0.5,
         min_mask_pixels: int = 16,
         max_objects: int = 32,
     ) -> None:
