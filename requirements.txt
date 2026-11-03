@@ -7,3 +7,4 @@ Pillow>=10
 tqdm>=4.66
 pycocotools>=2.0.7
 opencv-python-headless>=4.9
+pyarrow>=15
