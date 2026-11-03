@@ -155,7 +155,9 @@ class EntityDecoder(nn.Module):
         super().__init__()
         dim = config.spatial_dim
         self.entity_queries = nn.Parameter(torch.randn(1, config.num_entities, dim) * 0.02)
-        self.language_proj = nn.Linear(config.language_dim, dim)
+        # LSFSpatialCore projects the LFM3 hidden state into spatial_dim before
+        # invoking this decoder, so the entity decoder must not project it twice.
+        self.language_proj = nn.Identity()
         self.blocks = nn.ModuleList(
             [EntityDecoderBlock(dim, config.num_heads) for _ in range(config.entity_layers)]
         )
@@ -178,6 +180,11 @@ class EntityDecoder(nn.Module):
         if language_context is not None:
             if language_context.ndim == 3:
                 language_context = language_context.mean(dim=1)
+            if language_context.shape[-1] != entities.shape[-1]:
+                raise ValueError(
+                    "EntityDecoder expects language_context projected to spatial_dim; "
+                    f"got {language_context.shape[-1]}, expected {entities.shape[-1]}"
+                )
             entities = entities + self.language_proj(language_context).unsqueeze(1)
 
         # Keep the 64-token scene workspace, but let entity slots also inspect
