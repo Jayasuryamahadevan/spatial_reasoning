@@ -156,3 +156,40 @@ def test_box_iou_and_giou_are_bounded() -> None:
     iou, giou = box_iou_and_giou(boxes1, boxes2)
     assert torch.all((iou >= 0) & (iou <= 1))
     assert torch.all((giou >= -1) & (giou <= 1))
+
+
+def test_hungarian_entity_matching_and_objectness_gradients() -> None:
+    from lsf_vlm.training.matching import matched_entity_box_losses
+
+    boxes = torch.tensor(
+        [[[0.0, 0.0, 0.2, 0.2], [0.4, 0.4, 0.8, 0.8], [0.1, 0.1, 0.7, 0.7]]],
+        requires_grad=True,
+    )
+    objectness = torch.tensor([[2.0, 2.0, -2.0]], requires_grad=True)
+    targets = [torch.tensor([[0.0, 0.0, 0.2, 0.2], [0.4, 0.4, 0.8, 0.8]])]
+
+    losses, matches = matched_entity_box_losses(boxes, objectness, targets)
+    total = losses["objectness"] + losses["box_l1"] + losses["box_giou"]
+    total.backward()
+
+    assert matches[0][0].numel() == 2
+    assert matches[0][1].numel() == 2
+    assert torch.isfinite(total)
+    assert objectness.grad is not None
+    assert boxes.grad is not None
+
+
+def test_depth_loss_handles_invalid_target_pixels() -> None:
+    from lsf_vlm.training.losses import relative_depth_uncertainty_loss
+
+    prediction = torch.rand(1, 1, 8, 8, requires_grad=True) + 0.1
+    log_variance = torch.zeros(1, 1, 8, 8, requires_grad=True)
+    target = torch.rand(1, 1, 8, 8) + 0.1
+    target[:, :, 0, 0] = float("nan")
+    target[:, :, 1, 1] = 0.0
+
+    losses = relative_depth_uncertainty_loss(prediction, log_variance, target)
+    losses["depth_total"].backward()
+
+    assert torch.isfinite(losses["depth_total"])
+    assert prediction.grad is None or torch.isfinite(prediction.grad).all()
