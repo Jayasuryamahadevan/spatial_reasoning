@@ -199,10 +199,13 @@ def relative_depth_uncertainty_loss(
 def relation_classification_loss(logits: Tensor, targets: Tensor) -> Tensor:
     if logits.ndim != 4 or targets.ndim != 3:
         raise ValueError("Expected relation logits [B,Q,Q,R] and targets [B,Q,Q]")
+    flat_targets = targets.reshape(-1).long()
+    valid = flat_targets != -100
+    if not valid.any():
+        return logits.sum() * 0.0
     return F.cross_entropy(
-        logits.reshape(-1, logits.shape[-1]),
-        targets.reshape(-1).long(),
-        ignore_index=-100,
+        logits.reshape(-1, logits.shape[-1])[valid],
+        flat_targets[valid],
     )
 
 
@@ -211,7 +214,11 @@ def phrase_grounding_loss(entity_phrase_logits: Tensor, targets: Tensor) -> Tens
         raise ValueError("entity_phrase_logits must be [B,num_entities,num_phrases]")
     if targets.ndim != 2 or targets.shape != (entity_phrase_logits.shape[0], entity_phrase_logits.shape[2]):
         raise ValueError("targets must be [B,num_phrases] with target entity indices")
-    return F.cross_entropy(entity_phrase_logits.transpose(1, 2), targets.long(), ignore_index=-100)
+    valid = targets != -100
+    if not valid.any():
+        return entity_phrase_logits.sum() * 0.0
+    logits = entity_phrase_logits.transpose(1, 2)
+    return F.cross_entropy(logits[valid], targets.long()[valid])
 
 
 def combine_losses(
