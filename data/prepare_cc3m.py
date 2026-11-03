@@ -97,11 +97,19 @@ def build_manifest(args: argparse.Namespace) -> None:
                 if len(key) < 6 or not caption:
                     failed += 1
                     continue
-                shard = key[:5]
-                image_path = output_root / shard / f"{key}.jpg"
-                if not image_path.is_file():
+                # img2dataset's shard folder/key formatting can vary by version and
+                # oom_shard_count. Resolve the exact stored key instead of guessing
+                # a fixed prefix length or assuming every image is JPEG.
+                matches = [
+                    candidate for candidate in output_root.rglob(f"{key}.*")
+                    if candidate.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"}
+                ]
+                if not matches:
                     missing += 1
                     continue
+                if len(matches) > 1:
+                    raise RuntimeError(f"Ambiguous image key {key}: {matches[:5]}")
+                image_path = matches[0]
                 writer.writerow({
                     "image_id": key,
                     "image_path": str(image_path),
