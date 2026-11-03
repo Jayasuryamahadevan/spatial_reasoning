@@ -5,3 +5,4 @@ transformers>=5.21.0
 accelerate>=1.2
 safetensors
 Pillow>=10
+pytest>=8
