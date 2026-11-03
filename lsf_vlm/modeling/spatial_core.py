@@ -223,7 +223,7 @@ class SpatialPixelDecoder(nn.Module):
         mask_features = F.normalize(self.mask_features(pixel_features), dim=1)
         mask_queries = self.entity_to_mask(entity_tokens)
         mask_logits = torch.einsum("bqd,bdhw->bqhw", mask_queries, mask_features)
-        mask_logits = mask_logits + self.mask_bias(entity_tokens)
+        mask_logits = mask_logits + self.mask_bias(entity_tokens).unsqueeze(-1)
         return pixel_features, mask_logits
 
 
