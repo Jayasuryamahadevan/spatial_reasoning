@@ -155,34 +155,39 @@ def prepare_processor_inputs(
         masks = []
         matched_targets = []
         for phrase, target_index in phrases:
-            phrase_ids = processor.tokenizer(
-                " " + phrase,
-                add_special_tokens=False,
-            )["input_ids"]
-            if not phrase_ids:
-                phrase_ids = processor.tokenizer(
-                    phrase,
-                    add_special_tokens=False,
-                )["input_ids"]
+            token_variants = [
+                processor.tokenizer(text, add_special_tokens=False)["input_ids"]
+                for text in (" " + phrase, phrase)
+            ]
+            token_variants = [tokens for tokens in token_variants if tokens]
             found = None
-            if phrase_ids:
+            matched_phrase_ids = None
+            for phrase_ids in token_variants:
                 last_start = min(stop, len(sequence)) - len(phrase_ids)
                 for candidate_start in range(search_from, last_start + 1):
                     if sequence[candidate_start:candidate_start + len(phrase_ids)] == phrase_ids:
                         found = candidate_start
+                        matched_phrase_ids = phrase_ids
                         break
-                if found is None:
+                if found is not None:
+                    break
+            if found is None:
+                for phrase_ids in token_variants:
+                    last_start = min(stop, len(sequence)) - len(phrase_ids)
                     for candidate_start in range(start, last_start + 1):
                         if sequence[candidate_start:candidate_start + len(phrase_ids)] == phrase_ids:
                             found = candidate_start
+                            matched_phrase_ids = phrase_ids
                             break
-            if found is None:
+                    if found is not None:
+                        break
+            if found is None or matched_phrase_ids is None:
                 continue
             mask = torch.zeros_like(input_ids, dtype=torch.long)
-            mask[0, found:found + len(phrase_ids)] = 1
+            mask[0, found:found + len(matched_phrase_ids)] = 1
             masks.append(mask)
             matched_targets.append(target_index)
-            search_from = found + len(phrase_ids)
+            search_from = found + len(matched_phrase_ids)
         if masks:
             phrase_token_masks = torch.stack(masks, dim=1).to(device)
             phrase_targets = torch.tensor(
