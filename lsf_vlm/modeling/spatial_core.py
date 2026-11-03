@@ -286,14 +286,19 @@ class SpatialRelationHead(nn.Module):
     def __init__(self, dim: int, num_relations: int) -> None:
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(dim * 2 + 8, dim),
+            nn.Linear(dim * 2 + 10, dim),
             nn.GELU(),
             nn.Linear(dim, dim // 2),
             nn.GELU(),
             nn.Linear(dim // 2, num_relations),
         )
 
-    def forward(self, entities: Tensor, boxes: Tensor) -> Tensor:
+    def forward(
+        self,
+        entities: Tensor,
+        boxes: Tensor,
+        entity_depth: Tensor | None = None,
+    ) -> Tensor:
         batch, count, dim = entities.shape
         subject = entities[:, :, None, :].expand(-1, -1, count, -1)
         object_ = entities[:, None, :, :].expand(-1, count, -1, -1)
@@ -307,7 +312,21 @@ class SpatialRelationHead(nn.Module):
         size_object = (box_object[..., 2:] - box_object[..., :2]).clamp_min(1e-5)
         size_ratio = torch.log(size_object / size_subject)
         geometry = torch.cat((delta, center_delta, size_ratio), dim=-1)
-        pair = torch.cat((subject, object_, geometry), dim=-1)
+        if entity_depth is None:
+            depth_pair = torch.zeros(
+                (batch, count, count, 2),
+                device=entities.device,
+                dtype=entities.dtype,
+            )
+        else:
+            if entity_depth.shape != (batch, count, 2):
+                raise ValueError("entity_depth must be [B,Q,2] with mean depth and log uncertainty")
+            depth_subject = entity_depth[:, :, None, :].expand(-1, -1, count, -1)
+            depth_object = entity_depth[:, None, :, :].expand(-1, count, -1, -1)
+            depth_delta = depth_object[..., :1] - depth_subject[..., :1]
+            uncertainty_pair = depth_subject[..., 1:2] + depth_object[..., 1:2]
+            depth_pair = torch.cat((depth_delta, uncertainty_pair), dim=-1)
+        pair = torch.cat((subject, object_, geometry, depth_pair), dim=-1)
         logits = self.net(pair)
         diagonal = torch.eye(count, device=entities.device, dtype=torch.bool).unsqueeze(0)
         return logits.masked_fill(diagonal.unsqueeze(-1), 0.0)
@@ -380,8 +399,31 @@ class LSFSpatialCore(nn.Module):
         depth, depth_log_variance = self.depth_head(
             pixel_features, output_size=rgb.shape[-2:]
         )
+        # Pool the same dense depth field through the predicted entity masks.
+        # These two per-entity values give the relation head explicit geometric
+        # evidence and uncertainty for depth-order predicates.
+        mask_weights = mask_logits.sigmoid()
+        depth_small = F.interpolate(
+            depth, size=mask_logits.shape[-2:], mode="bilinear", align_corners=False
+        )
+        variance_small = F.interpolate(
+            depth_log_variance.exp(),
+            size=mask_logits.shape[-2:],
+            mode="bilinear",
+            align_corners=False,
+        )
+        weight_sum = mask_weights.sum(dim=(-2, -1)).clamp_min(1e-6)
+        entity_mean_depth = (
+            (mask_weights * depth_small).sum(dim=(-2, -1)) / weight_sum
+        )
+        entity_mean_variance = (
+            (mask_weights * variance_small).sum(dim=(-2, -1)) / weight_sum
+        ).clamp_min(1e-8).log()
+        entity_depth = torch.stack((entity_mean_depth, entity_mean_variance), dim=-1)
         relations = self.relation_head(
-            entities["entity_tokens"], entities["boxes_xyxy_norm"]
+            entities["entity_tokens"],
+            entities["boxes_xyxy_norm"],
+            entity_depth=entity_depth,
         )
         phrase_logits = None
         if phrase_contexts is not None:
