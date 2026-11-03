@@ -48,7 +48,7 @@ def test_unified_spatial_shapes_and_finite_outputs() -> None:
     assert output["boxes_xyxy_norm"].shape == (1, 32, 4)
     assert output["objectness_logits"].shape == (1, 32)
     assert output["mask_logits"].shape == (1, 32, 16, 20)
-    assert output["relative_inverse_depth"].shape == (1, 1, 64, 80)
+    assert output["relative_depth"].shape == (1, 1, 64, 80)
     assert output["depth_log_variance"].shape == (1, 1, 64, 80)
     assert output["relation_logits"].shape == (1, 32, 32, 10)
     assert output["entity_phrase_logits"].shape == (1, 32, 2)
@@ -59,7 +59,7 @@ def test_unified_spatial_shapes_and_finite_outputs() -> None:
         "boxes_xyxy_norm",
         "objectness_logits",
         "mask_logits",
-        "relative_inverse_depth",
+        "relative_depth",
         "depth_log_variance",
         "relation_logits",
         "entity_phrase_logits",
@@ -70,7 +70,7 @@ def test_unified_spatial_shapes_and_finite_outputs() -> None:
     assert ((boxes >= 0.0) & (boxes <= 1.0)).all()
     assert (boxes[..., 0] <= boxes[..., 2]).all()
     assert (boxes[..., 1] <= boxes[..., 3]).all()
-    assert (output["relative_inverse_depth"] > 0).all()
+    assert (output["relative_depth"] > 0).all()
 
 
 def test_spatial_losses_backpropagate_into_shared_core() -> None:
@@ -85,7 +85,7 @@ def test_spatial_losses_backpropagate_into_shared_core() -> None:
     masks = mask_loss(output["mask_logits"], target_masks)
     target_depth = torch.rand(1, 1, 64, 64) + 0.1
     depth = relative_depth_uncertainty_loss(
-        output["relative_inverse_depth"],
+        output["relative_depth"],
         output["depth_log_variance"],
         target_depth,
     )
